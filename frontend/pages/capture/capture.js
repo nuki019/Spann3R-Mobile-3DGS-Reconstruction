@@ -1,0 +1,1 @@
+@frontend/pages/capture/capture.js
