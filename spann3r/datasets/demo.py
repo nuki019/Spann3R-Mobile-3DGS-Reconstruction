@@ -29,10 +29,11 @@ class Demo(BaseManyViewDataset):
     
     def _get_views(self, idx, resolution, rng):
         
-        img_idxs = sorted(os.listdir(self.ROOT))
+        img_idxs = os.listdir(self.ROOT)
         valid_extensions = {'.jpg', '.jpeg', '.png', '.heic'}
         img_idxs = [idx for idx in img_idxs 
                     if idx.lower().endswith(tuple(valid_extensions)) and 'depth' not in idx.lower()]
+        img_idxs.sort(key=lambda name: (os.stat(osp.join(self.ROOT, name)).st_mtime_ns, name))
 
         img_idxs = self.sample_frame_idx(img_idxs, rng, full_video=self.full_video)
 
@@ -96,5 +97,3 @@ class Demo(BaseManyViewDataset):
                 instance=osp.split(impath)[1],
             ))
         return views
-
-

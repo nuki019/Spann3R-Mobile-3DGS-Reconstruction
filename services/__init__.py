@@ -1,0 +1,2 @@
+"""Service entrypoint package."""
+

@@ -31,8 +31,10 @@ def get_args_parser():
     parser.add_argument('--scenegraph_type', type=str, default='complete', help='scenegraph type')
     parser.add_argument('--offline', action='store_true', help='offline reconstruction')
     parser.add_argument('--device', type=str, default='cuda:0', help='device')
-    parser.add_argument('--conf_thresh', type=float, default=1e-3, help='confidence threshold')
-    parser.add_argument('--kf_every', type=int, default=10, help='map every kf_every frames')
+    parser.add_argument('--resolution', type=int, default=224, help='input resolution for Spann3R demo dataset')
+    parser.add_argument('--conf_thresh', type=float, default=1e-2, help='confidence threshold')
+    parser.add_argument('--kf_every', type=int, default=5, help='map every kf_every frames')
+    parser.add_argument('--voxel_size', type=float, default=0.01, help='voxel downsample size, <=0 means disabled')
     parser.add_argument('--vis', action='store_true', help='visualize')
     parser.add_argument('--vis_cam', action='store_true', help='visualize camera pose')
     parser.add_argument('--save_ori', action='store_true', help='save original parameters for NeRF')
@@ -85,7 +87,7 @@ def main(args):
     model.eval()
 
     ##### Load dataset
-    dataset = Demo(ROOT=args.demo_path, resolution=224, full_video=True, kf_every=args.kf_every)
+    dataset = Demo(ROOT=args.demo_path, resolution=args.resolution, full_video=True, kf_every=args.kf_every)
     dataloader = DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
 
     batch = dataloader.__iter__().__next__()
@@ -211,15 +213,38 @@ def main(args):
 
     # Save point cloud
     conf_sig_all = (conf_all-1) / conf_all
+    raw_mask = conf_sig_all > args.conf_thresh
 
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(pts_all[conf_sig_all>args.conf_thresh].reshape(-1, 3))
-    pcd.colors = o3d.utility.Vector3dVector(images_all[conf_sig_all>args.conf_thresh].reshape(-1, 3))
-    o3d.io.write_point_cloud(os.path.join(save_demo_path, f"{demo_name}_conf{args.conf_thresh}.ply"), pcd)
+    raw_pcd = o3d.geometry.PointCloud()
+    raw_pcd.points = o3d.utility.Vector3dVector(pts_all[raw_mask].reshape(-1, 3))
+    raw_pcd.colors = o3d.utility.Vector3dVector(images_all[raw_mask].reshape(-1, 3))
+
+    raw_count = len(raw_pcd.points)
+    raw_ply_name = f"{demo_name}_conf{args.conf_thresh}_raw.ply"
+    raw_ply_path = os.path.join(save_demo_path, raw_ply_name)
+    o3d.io.write_point_cloud(raw_ply_path, raw_pcd)
+    print(f"原始点云数量: {raw_count}")
+
+    downsampled_ply_name = f"{demo_name}_conf{args.conf_thresh}_downsampled_vs{args.voxel_size:.4f}.ply"
+    downsampled_ply_path = os.path.join(save_demo_path, downsampled_ply_name)
+    if args.voxel_size > 0:
+        train_pcd = raw_pcd.voxel_down_sample(args.voxel_size)
+        print(
+            "下采样点云数量: "
+            f"{len(train_pcd.points)} (voxel_size={args.voxel_size}, 保留率={len(train_pcd.points)/max(raw_count, 1):.4f})"
+        )
+    else:
+        train_pcd = o3d.geometry.PointCloud(raw_pcd)
+        print("voxel_size <= 0，已关闭下采样，训练点云与原始点云一致。")
+
+    o3d.io.write_point_cloud(downsampled_ply_path, train_pcd)
+    print(f"已输出点云: raw={raw_ply_name}, downsampled={downsampled_ply_name}")
+
+    train_ply_name = downsampled_ply_name
 
 
     if args.vis:
-        camera_parameters = find_render_cam(pcd, poses_all if args.vis_cam else None)
+        camera_parameters = find_render_cam(train_pcd, poses_all if args.vis_cam else None)
 
         render_frames(pts_all, images_all, camera_parameters, save_demo_path, mask=conf_sig_all>args.conf_thresh, dynamic=args.dynamic)
         vis_pred_and_imgs(pts_all, save_demo_path, images_all=images_all, conf_all=conf_sig_all)
@@ -237,15 +262,20 @@ def main(args):
         paths_all = [osp.normpath(osp.join(osp.abspath(os.getcwd()), view['label'][0]))
                       for view in ordered_batch]
 
-        transform_dict = get_transform_json(H_ori, W_ori, focal_ori, poses_all, 
-                                            f"{demo_name}_conf{args.conf_thresh}.ply",
-                                            ori_path=paths_all)
+        transform_dict = get_transform_json(
+            H_ori,
+            W_ori,
+            focal_ori,
+            poses_all,
+            train_ply_name,
+            ori_path=paths_all,
+        )
 
 
         
     
     else:
-        transform_dict = get_transform_json(H, W, focal, poses_all, f"{demo_name}_conf{args.conf_thresh}.ply")
+        transform_dict = get_transform_json(H, W, focal, poses_all, train_ply_name)
     
 
     # Save to json

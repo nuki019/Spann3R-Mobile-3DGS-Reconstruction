@@ -242,7 +242,10 @@ def main(args):
                 
             
             print(f"Dataset: {name_data}, Accuracy: {acc_all/len(dataloader)}, Completion: {comp_all/len(dataloader)}, NC1: {nc1_all/len(dataloader)}, NC2: {nc2_all/len(dataloader)} - Acc_med: {acc_all_med/len(dataloader)}, Comp_med: {comp_all_med/len(dataloader)}, NC1_med: {nc1_all_med/len(dataloader)}, NC2_med: {nc2_all_med/len(dataloader)}", file=open(log_file, "a"))
-            print(f"Average fps: {sum(fps) / len(fps)}, Average time: {sum(time_all) / len(time_all)}", file=open(log_file, "a"))
+            print(
+                f"Average fps: {sum(fps_all) / len(fps_all)}, Average time: {sum(time_all) / len(time_all)}",
+                file=open(log_file, "a"),
+            )
                 
 
 
@@ -271,4 +274,3 @@ if __name__ == '__main__':
 
 
                 
-

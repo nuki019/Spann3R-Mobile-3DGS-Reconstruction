@@ -12,6 +12,25 @@
   </a>
 </p>
 
+## Documentation Matrix (CN/EN)
+
+This repository now provides three document categories, each in Chinese and English:
+
+### 1) Backend API Docs (for backend/frontend integration)
+
+- CN: `docs/backend_api_cn.md`
+- EN: `docs/backend_api_en.md`
+
+### 2) User Guide (for daily operators/users)
+
+- CN: `docs/user_guide_cn.md`
+- EN: `docs/user_guide_en.md`
+
+### 3) Project Overview (for paper/report writing)
+
+- CN: `docs/project_overview_cn.md`
+- EN: `docs/project_overview_en.md`
+
 ## Update
 
 [2025-02-25] Spann3R v1.01 checkpoint [released](https://drive.google.com/drive/folders/1bqtcVf8lK4VC8LgG-SIGRBECcrFqM7Wy?usp=sharing)
@@ -126,6 +145,24 @@ python app.py
 
 You can specify the `--server_port`, `--share`, `--server_name` arguments to satisfy your needs!
 
+## Auto Pipeline (Upload -> Spann3R -> Splatfacto)
+
+For a production-style end-to-end pipeline (frontend upload, automatic reconstruction, Gaussian Splatting training, and web viewer), see:
+
+- `docs/auto_pipeline_cn.md`
+- `docs/backend_4090_principles_cn.md` (single RTX 4090, single-port 6006 mode)
+- `docs/backend_ui_cn.md` (backend monitoring UI + pointcloud download on 6008)
+- `.env.pipeline.example`
+- `.env.pipeline.4090.example`
+- `Dockerfile.pipeline`
+- `docker-compose.pipeline.yml`
+
+### Pipeline Code Layout (Optimized)
+
+- `pipeline/`: orchestration and conversion (`auto_gs.py`, `backend_4090.py`, `spann3r_to_nerfstudio.py`)
+- `services/`: HTTP services (`upload_server.py`, `backend_dashboard.py`, `pointcloud_download_server.py`)
+- Point cloud outputs: both `raw` and `downsampled` clouds are preserved and downloadable; training defaults to downsampled.
+
 
 ## Training and Evaluation
 
@@ -180,4 +217,3 @@ If you find our code or paper useful for your research, please consider citing:
   year={2024}
 }
 ```
-
