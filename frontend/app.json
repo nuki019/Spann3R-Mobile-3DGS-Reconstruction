@@ -1,0 +1,24 @@
+{
+  "pages": [
+    "pages/capture/capture",
+    "pages/preview/preview"  
+  ],
+  "window": {"backgroundTextStyle": "light",
+    "navigationBarBackgroundColor": "#000",
+    "navigationBarTitleText": "3D场景采集",
+    "navigationBarTextStyle": "white"},
+  "networkTimeout": {
+    "request": 10000,
+    "uploadFile": 60000
+  },
+  "serverDomain": {
+    "request": [
+      "https://u342234-nrj1-e55849b5.bjb2.seetacloud.com:8443",
+      "https://uu342234-nrj1-e55849b5.bjb2.seetacloud.com:8443"
+    ],
+    "uploadFile": [
+      "https://u342234-nrj1-e55849b5.bjb2.seetacloud.com:8443"]
+  },
+  "sitemapLocation": "sitemap.json",
+  "lazyCodeLoading": "requiredComponents"
+}

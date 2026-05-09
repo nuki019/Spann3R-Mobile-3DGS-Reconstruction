@@ -1,0 +1,218 @@
+/* 权限引导页 */
+.auth-wrap {
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background-color: #fff;
+  padding: 0 40rpx;
+}
+.auth-title {
+  font-size: 36rpx;
+  font-weight: bold;
+  margin-bottom: 20rpx;
+  color: #333;
+}
+.auth-desc {
+  font-size: 28rpx;
+  color: #666;
+  text-align: center;
+  margin-bottom: 60rpx;
+  line-height: 1.5;
+}
+.auth-btn {
+  width: 80%;
+  height: 80rpx;
+  line-height: 80rpx;
+  background-color: #1677ff;
+  color: #fff;
+  border-radius: 40rpx;
+  margin-bottom: 30rpx;
+  border: none;
+  font-size: 32rpx;
+}
+
+/* 采集页面主容器 */
+.capture-wrap {
+  width: 100%;
+  height: 100vh;
+  position: relative;
+}
+
+/* 相机区域 */
+.camera-wrap {
+  width: 100%;
+  height: 100vh;
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1;
+}
+
+/* IMU高频采样数据监控区（核心适配） */
+.imu-monitor {
+  position: fixed;
+  top: 20rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.9);
+  padding: 15rpx 20rpx;
+  border-radius: 12rpx;
+  color: #fff;
+  z-index: 999;
+  min-width: 95%;
+  box-sizing: border-box;
+}
+.imu-status {
+  text-align: center;
+  font-size: 30rpx;
+  font-weight: bold;
+  padding: 8rpx 0;
+  border-radius: 8rpx;
+  margin-bottom: 10rpx;
+}
+.imu-status.stable {
+  background-color: #52c41a;
+  color: #fff;
+}
+.imu-status.unstable {
+  background-color: #f5222d;
+  color: #fff;
+}
+.imu-data {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  font-size: 24rpx;
+  gap: 8rpx 4rpx;
+}
+.data-item {
+  flex: 1;
+  min-width: 120rpx;
+  text-align: center;
+  padding: 4rpx 0;
+  border-radius: 4rpx;
+  background: rgba(255,255,255,0.1);
+}
+
+/* 操作按钮区 */
+.btn-wrap {
+  position: fixed;
+  bottom: 40rpx;
+  left: 0;
+  right: 0;
+  padding: 0 30rpx;
+  display: flex;
+  gap: 20rpx;
+  z-index: 999;
+}
+.btn-primary {
+  flex: 2;
+  background-color: #1677ff;
+  color: #fff;
+  border-radius: 12rpx;
+  font-size: 28rpx;
+  line-height: 80rpx;
+  text-align: center;
+  border: none;
+}
+.btn-danger {
+  flex: 1;
+  background-color: #ff4d4f;
+  color: #fff;
+  border-radius: 12rpx;
+  font-size: 28rpx;
+  line-height: 80rpx;
+  text-align: center;
+  border: none;
+}
+
+/* 状态提示区 */
+.tips {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0,0,0,0.8);
+  color: #fff;
+  padding: 20rpx 40rpx;
+  border-radius: 12rpx;
+  z-index: 999;
+  font-size: 30rpx;
+}
+.tips-success {
+  background-color: #52c41a;
+}
+.tips-error {
+  background-color: #f5222d;
+}
+.tips-filter {
+  position: fixed;
+  top: 180rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  padding: 10rpx 20rpx;
+  border-radius: 8rpx;
+  font-size: 24rpx;
+  z-index: 999;
+}
+.tips-phase {
+  position: fixed;
+  top: 230rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.72);
+  color: #d6e4ff;
+  padding: 8rpx 14rpx;
+  border-radius: 8rpx;
+  font-size: 20rpx;
+  z-index: 999;
+  max-width: 94%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tips-album {
+  position: fixed;
+  top: 260rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.8);
+  color: #fff;
+  padding: 12rpx 24rpx;
+  border-radius: 8rpx;
+  font-size: 24rpx;
+  z-index: 999;
+}
+.tips-debug {
+  position: fixed;
+  top: 310rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.72);
+  color: #ffe58f;
+  padding: 8rpx 14rpx;
+  border-radius: 8rpx;
+  font-size: 20rpx;
+  z-index: 999;
+  max-width: 94%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tips-stage {
+  position: fixed;
+  top: 280rpx;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  padding: 10rpx 20rpx;
+  border-radius: 8rpx;
+  font-size: 22rpx;
+  z-index: 999;
+}
