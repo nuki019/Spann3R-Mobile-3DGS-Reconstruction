@@ -4,9 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-Spann3R 是一个基于空间记忆（Spatial Memory）的 3D 重建系统，输入为多视角图片序列，输出稠密点云与相机位姿。系统构建了一条端到端的自动化流水线：图片上传 → Spann3R 重建 → Nerfstudio/Splatfacto 高斯溅射训练 → 可视化与导出。
+Spann3R-Mobile-3DGS-Reconstruction 是一个前后端分离的移动端 3D 高斯溅射重建系统。
+
+- **后端**（`backend/`）：基于空间记忆的 Spann3R 3D 重建引擎 + 自动化流水线 + HTTP 服务
+- **前端**（`frontend/`）：待开发，移动端图片上传与 3DGS 可视化
+
+后端流水线：图片上传 → Spann3R 点云重建 → Nerfstudio/Splatfacto 高斯溅射训练 → 在线可视化与导出。
 
 ## 常用命令
+
+> 以下命令均需先 `cd backend` 进入后端目录。
 
 ### 环境搭建
 
@@ -23,11 +30,11 @@ cd croco/models/curope/ && python setup.py build_ext --inplace && cd ../../../
 ### 运行 Demo
 
 ```bash
-python demo.py --demo_path ./examples/s00567 --kf_every 10 --vis --vis_cam
+python demo.py --demo_path ./assets/examples/s00567 --kf_every 10 --vis --vis_cam
 # 动态场景模式
-python demo.py --demo_path ./examples/s00567 --kf_every 10 --vis --vis_cam --dynamic
+python demo.py --demo_path ./assets/examples/s00567 --kf_every 10 --vis --vis_cam --dynamic
 # 保存原始相机参数（供 Nerfstudio 使用）
-python demo.py --demo_path ./examples/s00567 --kf_every 10 --vis --vis_cam --save_ori
+python demo.py --demo_path ./assets/examples/s00567 --kf_every 10 --vis --vis_cam --save_ori
 ```
 
 ### 训练与评估
@@ -60,42 +67,45 @@ curl http://127.0.0.1:6008/api/status
 ## 架构分层
 
 ```
-Spann3R/
-├── spann3r/          # 模型层：核心模型定义、数据集、训练逻辑
-│   ├── model.py      # Spann3R 模型（含 SpatialMemory 类）
-│   ├── loss.py       # Scale-Shift-Invariant 回归损失
-│   ├── training.py   # 训练循环（torchrun 分布式）
-│   ├── datasets/     # 多数据集适配器（ScanNet/Co3D/DTU 等）
-│   └── tools/        # 评估与可视化工具
-├── dust3r/           # 上游依赖：DUSt3R（双视角立体 3D 重建）
-│   ├── model.py      # AsymmetricCroCo3DStereo 基类
-│   ├── inference.py  # 推理逻辑（make_pairs → inference）
-│   └── heads/        # 回归头（深度/点云/置信度预测）
-├── croco/            # 上游依赖：CroCo ViT 骨干网络
-│   └── models/       # Block、RoPE 位置编码（含 CUDA 内核）
-├── pipeline/         # 编排层：自动化训练管线
-│   ├── auto_gs.py    # 主编排器（PipelineConfig + 端到端流程）
-│   ├── backend_4090.py   # 单卡 4090 单端口复用编排
-│   └── spann3r_to_nerfstudio.py  # 点云/位姿 → transforms.json 转换
-├── services/         # 服务层：HTTP 微服务
-│   ├── upload_server.py          # FastAPI 上传服务（6006）
-│   ├── backend_dashboard.py      # FastAPI 管理 UI + API（6008）
-│   └── pointcloud_download_server.py  # 点云下载服务
-├── demo.py           # 单场景推理入口（核心调用链）
-├── app.py            # Gradio 交互界面
-├── train.py          # 分布式训练入口
-└── eval.py           # 评估入口（DTU/7Scenes/NRGBD/Replica）
+Spann3R-Mobile-3DGS-Reconstruction/
+├── backend/                  # 后端（全部重建逻辑）
+│   ├── spann3r/              #   模型层：核心模型定义、数据集、训练逻辑
+│   │   ├── model.py          #     Spann3R 模型（含 SpatialMemory 类）
+│   │   ├── loss.py           #     Scale-Shift-Invariant 回归损失
+│   │   ├── training.py       #     训练循环（torchrun 分布式）
+│   │   ├── datasets/         #     多数据集适配器（ScanNet/Co3D/DTU 等）
+│   │   └── tools/            #     评估与可视化工具
+│   ├── dust3r/               #   上游依赖：DUSt3R（双视角立体 3D 重建）
+│   │   ├── model.py          #     AsymmetricCroCo3DStereo 基类
+│   │   ├── inference.py      #     推理逻辑（make_pairs → inference）
+│   │   └── heads/            #     回归头（深度/点云/置信度预测）
+│   ├── croco/                #   上游依赖：CroCo ViT 骨干网络
+│   │   └── models/           #     Block、RoPE 位置编码（含 CUDA 内核）
+│   ├── pipeline/             #   编排层：自动化训练管线
+│   │   ├── auto_gs.py        #     主编排器（PipelineConfig + 端到端流程）
+│   │   ├── backend_4090.py   #     单卡 4090 单端口复用编排
+│   │   └── spann3r_to_nerfstudio.py  # 点云/位姿 → transforms.json 转换
+│   ├── services/             #   服务层：HTTP 微服务
+│   │   ├── upload_server.py          # FastAPI 上传服务（6006）
+│   │   ├── backend_dashboard.py      # FastAPI 管理 UI + API（6008）
+│   │   └── pointcloud_download_server.py  # 点云下载服务
+│   ├── demo.py               #   单场景推理入口（核心调用链）
+│   ├── app.py                #   Gradio 交互界面
+│   ├── train.py              #   分布式训练入口
+│   ├── eval.py               #   评估入口（DTU/7Scenes/NRGBD/Replica）
+│   └── docs/                 #   详细文档（中/英）
+└── frontend/                 # 前端（待开发）
 ```
 
 ## 核心调用链
 
-**推理重建路径**（demo.py）:
+**推理重建路径**（`backend/demo.py`）:
 1. `Spann3R` 模型加载 → 包含 `SpatialMemory`（工作记忆 + 长期记忆）
 2. `Spann3R.forward()` 逐帧处理 → 维护空间记忆的键值缓存（mem_k/mem_v/mem_c）
 3. `DUSt3R` 回归头预测每帧 3D 点云 + 置信度
 4. 置信度过滤 → 体素下采样 → 输出 `raw.ply` 与 `downsampled.ply`
 
-**自动化流水线路径**（pipeline/backend_4090.py）:
+**自动化流水线路径**（`backend/pipeline/backend_4090.py`）:
 1. **阶段 A**: `upload_server` 监听上传，`backend_4090` 轮询 `WATCH_DIR` 直到图片数量达标且稳定
 2. **阶段 B**: 关闭上传服务 → 快照图片 → 调用 `demo.py` 重建 → 转换 Nerfstudio 格式
 3. **阶段 C**: 启动 `ns-train splatfacto` → 6006 切换为 Viewer
@@ -105,14 +115,14 @@ Spann3R/
 
 | 端口 | 用途 | 服务入口 |
 |------|------|---------|
-| 6006 | 上传服务（阶段A）→ Nerfstudio Viewer（阶段C）复用 | `services/upload_server.py` / splatfacto |
-| 6008 | 管理 UI、状态 API、点云下载 | `services/backend_dashboard.py` |
+| 6006 | 上传服务（阶段A）→ Nerfstudio Viewer（阶段C）复用 | `backend/services/upload_server.py` / splatfacto |
+| 6008 | 管理 UI、状态 API、点云下载 | `backend/services/backend_dashboard.py` |
 
-6006 在单端口模式下上传与 Viewer 互斥，由 `backend_4090.py` 自动切换。
+6006 在单端口模式下上传与 Viewer 互斥，由 `backend/pipeline/backend_4090.py` 自动切换。
 
 ## 关键配置
 
-所有流水线配置通过 `.env.pipeline` 或 `.env.pipeline.4090` 环境变量文件注入，核心参数：
+所有流水线配置通过 `backend/.env.pipeline` 或 `backend/.env.pipeline.4090` 环境变量文件注入，核心参数：
 
 - `SPANN3R_KF_EVERY`：关键帧间隔，影响重建质量与速度
 - `SPANN3R_CONF_THRESH`：置信度阈值，过滤低质量 3D 点
@@ -126,7 +136,7 @@ Spann3R/
 
 ## 文档索引
 
-详细文档位于 `docs/` 目录：
+详细文档位于 `backend/docs/` 目录：
 - `backend_api_cn.md` / `backend_api_en.md` — 后端 API 接口文档
 - `user_guide_cn.md` / `user_guide_en.md` — 用户操作指南
 - `project_overview_cn.md` / `project_overview_en.md` — 项目总览
