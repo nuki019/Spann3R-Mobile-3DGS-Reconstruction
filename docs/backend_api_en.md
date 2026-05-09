@@ -1,0 +1,349 @@
+# Spann3R Backend API Reference (EN)
+
+This document is for backend/frontend integration and reflects the current implementation.
+
+- Upload service: `services/upload_server.py`
+- Dashboard and download service: `services/backend_dashboard.py`
+- Optional standalone download service: `services/pointcloud_download_server.py`
+
+## 1. Services and Ports
+
+Default deployment (single-port reuse for RTX 4090 mode):
+
+- `6006`: upload service in Phase A, then Viewer in Phase C
+- `6008`: dashboard UI, status APIs, and download APIs
+
+Recommended startup:
+
+```bash
+cd /root/autodl-tmp/Spann3R
+bash start_backend_ui.sh
+bash start_backend_4090.sh
+```
+
+One-command restart:
+
+```bash
+cd /root/autodl-tmp/Spann3R
+bash restart_backend_stack.sh
+```
+
+## 2. Authentication
+
+### 2.1 Upload API Auth
+
+- Env var: `UPLOAD_AUTH_TOKEN`
+- If empty: upload endpoint is open
+- If set: `POST /upload` requires a token via either:
+  - form field: `token`
+  - header: `X-Auth-Token`
+
+### 2.2 Management API Auth
+
+- Env var: `DASHBOARD_AUTH_TOKEN`
+- If empty: management APIs are open
+- If set: the following `POST` routes require header `X-Auth-Token`
+  - `POST /api/config`
+  - `POST /api/uploads/clear`
+  - `POST /api/pointclouds/clear`
+  - `POST /api/pipeline/start`
+  - `POST /api/pipeline/stop`
+  - `POST /api/gaussian/export_latest`
+
+## 3. Upload Service APIs (Port 6006)
+
+Base URL example: `http://127.0.0.1:6006`
+
+### 3.1 GET `/`
+
+Returns a basic service intro.
+
+### 3.2 GET `/healthz`
+
+Returns service health and save directory.
+
+Example:
+
+```json
+{
+  "status": "ok",
+  "save_dir": "/root/autodl-tmp/input_images"
+}
+```
+
+### 3.3 GET `/stats`
+
+Returns cumulative upload stats.
+
+```json
+{
+  "uploaded_files": 12,
+  "uploaded_bytes": 3456789,
+  "save_dir": "/root/autodl-tmp/input_images",
+  "max_file_size_mb": 25
+}
+```
+
+### 3.4 POST `/upload`
+
+- `Content-Type`: `multipart/form-data`
+- form fields:
+  - `frame_file` (required, `jpg/jpeg/png`)
+  - `token` (optional)
+- header:
+  - `X-Auth-Token` (optional, alternative to form token)
+
+Success response:
+
+```json
+{
+  "code": 200,
+  "msg": "上传成功",
+  "filename": "20260418110000_123456_ab12cd34.jpg",
+  "bytes": 582311
+}
+```
+
+Common errors:
+
+- `400`: unsupported file type
+- `401`: invalid auth token
+- `413`: file too large
+- `500`: server-side save failure
+
+Example:
+
+```bash
+curl -X POST "http://127.0.0.1:6006/upload" \
+  -H "X-Auth-Token: <UPLOAD_AUTH_TOKEN>" \
+  -F "frame_file=@/path/to/frame.jpg"
+```
+
+## 4. Dashboard and Download APIs (Port 6008)
+
+Base URL example: `http://127.0.0.1:6008`
+
+### 4.1 Page Routes
+
+- `GET /`: dashboard home (HTML)
+- `GET /downloads`: point-cloud download page (HTML)
+
+### 4.2 Health
+
+#### GET `/healthz`
+
+Response fields:
+
+- `status`
+- `watch_dir`
+- `scene_data_root`
+- `test_photo_root`
+- `pointcloud_roots`
+- `auth_enabled`
+
+### 4.3 Status and Logs
+
+#### GET `/api/status`
+
+Returns current pipeline process state.
+
+```json
+{
+  "running": true,
+  "pid": 12345
+}
+```
+
+#### GET `/api/logs?lines=200`
+
+- `lines` is clamped to `20~1000`
+
+```json
+{
+  "lines": [
+    "===== START 2026-04-18 11:20:00 =====",
+    "..."
+  ]
+}
+```
+
+#### GET `/api/progress`
+
+Aggregated progress parsed from logs. Common fields:
+
+- `phase` / `stage`: `idle | input | spann3r | gaussian | completed | stopped`
+- `step`, `loss`, `percent`
+- `uploaded_images`
+- `scene_name`
+- `raw_points`, `downsampled_points`, `keep_ratio`
+- `gaussian_raw_file`, `gaussian_clipped_file`
+- `downsample_summary`, `gaussian_summary`
+- `sections` (phase status array)
+
+### 4.4 Config APIs
+
+#### GET `/api/config`
+
+Returns editable runtime config values from `.env.pipeline.4090`.
+
+#### GET `/api/config_meta`
+
+Returns:
+
+- `editable_keys`
+- `help` (description per key)
+
+#### POST `/api/config`
+
+Request body:
+
+```json
+{
+  "values": {
+    "MIN_IMG_COUNT": "60",
+    "SPANN3R_KF_EVERY": "6"
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "values": {
+    "MIN_IMG_COUNT": "60",
+    "SPANN3R_KF_EVERY": "6"
+  }
+}
+```
+
+### 4.5 Upload/Scene Summaries
+
+#### GET `/api/uploads/summary`
+
+Returns upload directory summary: `watch_dir`, `count`, `latest_mtime`, `items`.
+
+#### POST `/api/uploads/clear`
+
+Deletes uploaded images.
+
+```json
+{
+  "ok": true,
+  "deleted": 128
+}
+```
+
+#### GET `/api/scenes/summary`
+
+Returns scene-level summary:
+
+- `latest_scene`
+- `dataset_count`
+- `photo_scene_count`
+- `pointcloud_count`
+- `datasets`
+- `photo_scenes`
+
+### 4.6 Pipeline Control
+
+#### POST `/api/pipeline/start`
+
+Starts `pipeline.backend_4090`.
+
+```json
+{
+  "ok": true,
+  "pid": 23456
+}
+```
+
+#### POST `/api/pipeline/stop`
+
+Stops the current pipeline process.
+
+```json
+{
+  "ok": true,
+  "stopped": true
+}
+```
+
+### 4.7 Point-Cloud APIs (Built into Dashboard)
+
+#### GET `/files`
+
+Returns point-cloud index.
+
+```json
+{
+  "items": [
+    {
+      "id": "abcdef1234567890",
+      "name": "scene_x_gaussian_clipped.ply",
+      "scene": "scene_x",
+      "variant": "gaussian",
+      "path": "/root/autodl-tmp/gs_train/scenes/scene_x/scene_x_gaussian_clipped.ply",
+      "size_bytes": "12345678",
+      "mtime": "2026-04-18 11:30:00",
+      "download_url": "/download/abcdef1234567890"
+    }
+  ]
+}
+```
+
+#### GET `/download/latest?prefer=gaussian`
+
+Downloads latest point cloud by preference. `prefer` options:
+
+- `gaussian`
+- `downsampled`
+- `train`
+- `raw`
+- `any`
+
+#### GET `/download/{file_id}`
+
+Downloads by file ID.
+
+### 4.8 Manual Gaussian Export
+
+#### POST `/api/gaussian/export_latest`
+
+Runs Gaussian export/cropping for latest scene and returns output path.
+
+```json
+{
+  "ok": true,
+  "scene": "scene_20260418_xxxx",
+  "gaussian_file": "/root/.../scene_x_gaussian_clipped.ply"
+}
+```
+
+## 5. Optional Standalone Download Service
+
+If you run `pointcloud_download_server.py` independently, routes are:
+
+- `GET /`
+- `GET /healthz`
+- `GET /files`
+- `GET /download/latest?prefer=gaussian`
+- `GET /download/{file_id}`
+
+Port is controlled by `POINTCLOUD_PORT` (default `6008`).
+
+## 6. Integration Checklist
+
+1. Verify health first:
+
+```bash
+curl http://127.0.0.1:6008/healthz
+curl http://127.0.0.1:6006/healthz
+```
+
+2. Confirm `UPLOAD_MAX_FILE_SIZE_MB` before large upload tests.
+3. If auth is enabled, validate `401` branches explicitly.
+4. Suggested frontend polling:
+   - high frequency: `/api/status`, `/api/progress` (every 2-3s)
+   - lower frequency: `/api/scenes/summary`, `/api/logs` (every 5-10s)

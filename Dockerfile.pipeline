@@ -1,0 +1,30 @@
+FROM pytorch/pytorch:2.3.0-cuda11.8-cudnn8-runtime
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libgl1 \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace/Spann3R
+
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install -r /tmp/requirements.txt \
+    && pip install "nerfstudio==1.1.5"
+
+COPY . /workspace/Spann3R
+
+# Some deployments do not provide NVCC at build time; keep this best-effort.
+RUN if [ -d "croco/models/curope" ]; then \
+      (cd croco/models/curope && python setup.py build_ext --inplace) || true; \
+    fi
+
+EXPOSE 6008 6006
+
+CMD ["bash", "start_all.sh"]

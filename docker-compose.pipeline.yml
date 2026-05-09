@@ -1,0 +1,26 @@
+version: "3.9"
+
+services:
+  spann3r-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile.pipeline
+    container_name: spann3r-pipeline
+    env_file:
+      - .env.pipeline
+    environment:
+      - SPANN3R_ROOT=/workspace/Spann3R
+    working_dir: /workspace/Spann3R
+    command: ["bash", "start_all.sh"]
+    ports:
+      - "6008:6008"
+      - "6006:6006"
+    volumes:
+      - ./checkpoints:/workspace/Spann3R/checkpoints
+      - ./output:/workspace/Spann3R/output
+      - ./logs:/workspace/Spann3R/logs
+      - ./runtime_data/input_images:/workspace/data/input_images
+      - ./runtime_data/gs_train:/workspace/data/gs_train
+      - ./runtime_data/input_archive:/workspace/data/input_archive
+    gpus: all
+    restart: unless-stopped
