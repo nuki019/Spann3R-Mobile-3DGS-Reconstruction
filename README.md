@@ -308,14 +308,25 @@ scene_name/
 **根目录：**
 - 后端管线部署指南 — `backend/BACKEND_PIPELINE_GUIDE_CN.md` / `_EN.md`
 
-## 致谢
+## 致谢与引用声明
 
-本项目基于以下优秀开源工作：
+本项目基于学术界和开源社区的优秀成果进行工程化二次开发，在此向所有无私贡献的研究者和开发者致以最诚挚的感谢：
 
-- [Spann3R](https://github.com/HengyiWang/spann3r) — Hengyi Wang, Lourdes Agapito (arXiv 2024)
-- [DUSt3R](https://github.com/naver/dust3r)
-- [Nerfstudio](https://github.com/nerfstudio-project/nerfstudio)
-- [SplaTAM](https://github.com/spla-tam/SplaTAM)
+### 核心算法底座
+
+* **[Spann3R: 3D Reconstruction with Spatial Memory](https://arxiv.org/abs/2408.16061)** - Hengyi Wang, Lourdes Agapito (arXiv 2024)
+  本项目的核心空间记忆 3D 重建算法基础，解决了传统重建需要复杂全局优化的痛点
+* **[DUSt3R: Geometric 3D Vision Made Easy](https://github.com/naver/dust3r)** - Shuzhe Wang et al. (CVPR 2024)
+  提供双视角立体重建的基础模型与预训练权重
+* **[Nerfstudio](https://github.com/nerfstudio-project/nerfstudio)**
+  提供模块化的 3D 高斯溅射（Splatfacto）训练与可视化框架
+* **[SplaTAM](https://github.com/spla-tam/SplaTAM)**
+  为 3D 重建与高斯溅射的工程落地提供了重要参考
+
+### 特别感谢
+
+* **[hugoycj (Chongjie Ye)](https://github.com/hugoycj)**
+  为上游 Spann3R 项目贡献了 **Gradio 交互界面框架与 checkpoint 自动下载功能（PR #14）** ，为本项目后端服务的工程化实现提供了重要基础
 
 ## 许可证
 
