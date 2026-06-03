@@ -1,31 +1,13 @@
-# 结题报告与答辩 PPT 截图清单
+# 结题材料截图清单
 
-以下截图用于替换 `final_report_draft_with_placeholders.docx` 和 `final_defense_ppt_draft.pptx` 中的空图位。
+已放入 `screenshots` 的截图：
+- `dashboard_home.png`：后台管理首页/上传监控。
+- `downloads_page.png`：训练点云下载页面。
+- `viewer_6006.png`：Nerfstudio Viewer 已连接的预览截图。
 
-## 必需截图
-
-1. 微信小程序采集页：展示拍照/选择照片、清晰度提示、上传入口。
-2. 微信小程序预览页：展示上传统计、训练状态、等待队列、点云列表。
-3. AutoDL 6008 管理面板：首页状态、阶段进度、上传目录摘要。
-4. AutoDL 6008 点云下载页：展示 raw / downsampled / gaussian 分类、优化下载、ZIP 打包下载。
-5. 处理后点云下载对比：保留原始文件大小与优化后文件大小，例如当前测试中约 482 KB 优化到约 17 KB。
-6. Nerfstudio Viewer 或浏览器预览页：展示训练或已有点云/高斯结果的可视化画面。
-7. AutoDL 端口与路径方案：展示 6006 用于 Viewer、6008 用于管理 UI/上传代理/下载接口。
-8. 训练日志或任务状态：展示 Spann3R 重建、Splatfacto 训练、Gaussian 导出的关键阶段。
-
-## 可选加分截图
-
-1. `/healthz` 健康检查页面，证明后端服务在线。
-2. `/api/pointclouds/summary` 或点云清单接口，证明多文件发现与下载入口可用。
-3. `/upload-proxy/stats` 上传代理统计，证明小程序上传进入 AutoDL 数据盘。
-4. `/root/autodl-tmp` 存储目录与缓存目录截图，证明系统盘未被大量占用。
-5. Spann3R 原始点云、下采样点云、Splatfacto Gaussian 导出点云的对比图。
-6. 同一张卡上不同方案的流程/耗时/结果对比表，如 Spann3R+Splatfacto 与传统 COLMAP+Splatfacto。
-7. `/root/autodl-tmp/workflow_benchmarks` 同卡短基准截图，展示 Nerfacto 20 步约 16 秒、Splatfacto 隔离修复后 20 步约 230 秒、数据盘剩余空间。
-
-## 当前可用链接
-
-- 6008 管理面板：`https://uu342234-z010-6c5b5490.bjb2.seetacloud.com:8443/`
-- 6008 健康检查：`https://uu342234-z010-6c5b5490.bjb2.seetacloud.com:8443/healthz`
-- 6008 点云下载页：`https://uu342234-z010-6c5b5490.bjb2.seetacloud.com:8443/downloads`
-- 6006 Viewer：`https://u342234-z010-6c5b5490.bjb2.seetacloud.com:8443/`
+建议补拍：
+- 小程序首页采集页：显示紧凑状态条和“稳定性筛选 / 清晰度筛选”。
+- 小程序采集中：显示“有效帧 / 总帧”和“晃动 / 模糊”摘要。
+- 小程序上传完成跳转预览页：证明前端体验闭环。
+- Viewer 手动旋转后的清晰主体角度：当前截图能证明可连接，但主体不够清楚。
+- 下载页筛选最新 Gaussian 的局部截图：用于答辩时突出最终成果。

@@ -1,81 +1,83 @@
-<!-- 权限引导页（初始显示） -->
 <view class="auth-wrap" wx:if="{{!hasCameraAuth}}">
-  <view class="auth-title">请授权必要权限</view>
-  <view class="auth-desc">需要相机和相册权限才能进行3D场景精准采集</view>
-  <button class="auth-btn" bindtap="applyCameraAuth">授权相机权限</button>
-  <button class="auth-btn" bindtap="applyAlbumAuth">授权相册权限</button>
+  <view class="auth-card">
+    <view class="auth-title">3D 场景采集</view>
+    <view class="auth-desc">开启相机用于采集关键帧；相册权限用于保存筛选后的有效照片。</view>
+    <button class="auth-btn primary" bindtap="applyCameraAuth">开启相机</button>
+    <button class="auth-btn secondary" bindtap="applyAlbumAuth">允许保存照片</button>
+  </view>
 </view>
 
-<!-- 采集页面（授权后显示） -->
 <view class="capture-wrap" wx:else>
-  <!-- IMU高频采样数据监控区【全量显示】 -->
-  <view class="imu-monitor">
-    <view class="imu-status {{isIMUStable ? 'stable' : 'unstable'}}">
-      {{isIMUStable ? '✅ 稳定（可采集）' : '❌ 晃动（禁止采集）'}}
-    </view>
-    <view class="imu-data">
-      <text class="data-item">方差：{{imuVariance}}</text>
-      <!-- 加速度计数据 -->
-      <text class="data-item">AccX：{{accX}}</text>
-      <text class="data-item">AccY：{{accY}}</text>
-      <text class="data-item">AccZ：{{accZ}}</text>
-      <!-- 陀螺仪数据（新增） -->
-      <text class="data-item">GyroX：{{gyroX}}</text>
-      <text class="data-item">GyroY：{{gyroY}}</text>
-      <text class="data-item">GyroZ：{{gyroZ}}</text>
-      <text class="data-item">清晰度：{{blurScore}}</text>
-      <text class="data-item">阈值：{{blurThreshold}}</text>
-    </view>
-  </view>
-
-  <view class="tips-filter" wx:if="{{frameCount > 0}}">
-    总帧{{frameCount}} | 有效{{validFrameCount}} | IMU淘汰{{rejectedIMUCount}} | 模糊淘汰{{rejectedBlurCount}}
-  </view>
-  <view class="tips-phase">
-    阶段：{{phaseText}} | {{phaseHint}}
-  </view>
-  <view class="tips-debug" wx:if="{{debugInfo}}">
-    调试：{{debugInfo}} | saveFail={{saveFailCount}} | blurFallback={{blurFallbackCount}}
-  </view>
-
-  <!-- 相机采集区域 -->
   <view class="camera-wrap">
-    <camera 
-      device-position="back" 
-      resolution="720p" 
+    <camera
+      device-position="back"
+      resolution="720p"
       style="width: 100%; height: 100%;"
       binderror="onCameraError"
       id="camera"
     ></camera>
   </view>
 
-  <!-- 操作按钮区 -->
+  <view class="top-panel">
+    <view class="status-row">
+      <view class="status-pill {{isIMUStable ? 'ok' : 'warn'}}">
+        {{isIMUStable ? '稳定' : '请持稳'}}
+      </view>
+      <view class="status-title">双筛关键帧采集</view>
+      <view class="status-pill {{phaseAllowUpload ? 'ok' : 'idle'}}">
+        {{phaseAllowUpload ? '后端就绪' : '等待服务'}}
+      </view>
+    </view>
+
+    <view class="filter-row">
+      <view class="filter-item {{isIMUStable ? 'pass' : 'pending'}}">
+        <text class="filter-name">稳定性筛选</text>
+        <text class="filter-value">{{isIMUStable ? '通过' : '待通过'}}</text>
+      </view>
+      <view class="filter-item {{blurScore >= blurThreshold ? 'pass' : 'pending'}}">
+        <text class="filter-name">清晰度筛选</text>
+        <text class="filter-value">{{blurScore >= blurThreshold ? '通过' : '检测中'}}</text>
+      </view>
+    </view>
+
+    <view class="capture-counts">
+      <text>有效帧 {{validFrameCount}} / 总帧 {{frameCount}}</text>
+      <text wx:if="{{frameCount > 0}}" class="reject-summary">晃动 {{rejectedIMUCount}} · 模糊 {{rejectedBlurCount}}</text>
+    </view>
+  </view>
+
+  <view class="center-toast" wx:if="{{isUploading}}">
+    上传中 {{uploadProgress}}%
+  </view>
+  <view class="center-toast success" wx:if="{{uploadDone}}">
+    上传完成，正在进入状态页
+  </view>
+  <view class="center-toast error" wx:if="{{uploadError}}">
+    上传失败，请重试
+  </view>
+  <view class="album-toast" wx:if="{{saveToAlbumDone}}">
+    已保存 {{validFrameCount}} 张有效帧
+  </view>
+
   <view class="btn-wrap">
-    <button 
-      class="btn-primary" 
+    <button
+      class="btn-primary"
       bindtap="toggleCapture"
       disabled="{{isUploading}}"
     >
-      <text wx:if="{{isCapturing}}">停止采集（有效{{validFrameCount}}/总{{frameCount}}）</text>
-      <text wx:else>开始双重筛选采集</text>
+      <text wx:if="{{isCapturing}}">停止采集 · 有效 {{validFrameCount}}</text>
+      <text wx:else>开始采集</text>
     </button>
-    <button 
-      class="btn-danger" 
+    <button
+      class="btn-upload"
       bindtap="syncToBackend"
       disabled="{{validFrameCount === 0 || isUploading || isCapturing || !phaseAllowUpload}}"
     >
-      <text wx:if="{{isUploading}}">上传中{{uploadProgress}}%</text> <!-- 新增进度 -->
-      <text wx:elif="{{!phaseAllowUpload}}">等待上传服务就绪</text>
-      <text wx:else>上传到6006映射入口</text>
+      <text wx:if="{{isUploading}}">{{uploadProgress}}%</text>
+      <text wx:elif="{{isCapturing}}">采集中</text>
+      <text wx:elif="{{validFrameCount === 0}}">无有效帧</text>
+      <text wx:elif="{{!phaseAllowUpload}}">等待服务</text>
+      <text wx:else>上传</text>
     </button>
-  </view>
-
-  <!-- 状态提示区 -->
-  <view class="tips" wx:if="{{isUploading}}">正在上传到6006映射入口（u域名:8443）...</view>
-  <view class="tips tips-success" wx:if="{{uploadDone}}">✅ 上传完成！可在预览页查看后端状态</view>
-  <view class="tips tips-error" wx:if="{{uploadError}}">❌ 上传失败，请重试！</view>
-  <view class="tips-album" wx:if="{{saveToAlbumDone}}">📸 精准有效帧已存相册（共{{validFrameCount}}帧）</view>
-  <view class="tips-stage" wx:if="{{!isCapturing && !isUploading && frameCount === 0}}">
-    说明：6006 上传与 Viewer 分阶段复用（前端访问为 u域名:8443）
   </view>
 </view>

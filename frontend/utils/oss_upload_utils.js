@@ -4,10 +4,10 @@
 // 6008：管理 UI、状态接口、下载接口与 /upload-proxy 上传代理
 
 // 端口映射说明：
-// 后端 6006 -> 前端访问 https://u342234-z010-6c5b5490.bjb2.seetacloud.com:8443
-// 后端 6008 -> 前端访问 https://uu342234-z010-6c5b5490.bjb2.seetacloud.com:8443
-const DASHBOARD_BASE_URL = "https://uu342234-z010-6c5b5490.bjb2.seetacloud.com:8443";
-const VIEWER_BASE_URL = "https://u342234-z010-6c5b5490.bjb2.seetacloud.com:8443";
+// 后端 6006 -> 前端访问 https://u342234-a85f-8b002f1b.bjb1.seetacloud.com:8443
+// 后端 6008 -> 前端访问 https://uu342234-a85f-8b002f1b.bjb1.seetacloud.com:8443
+const DASHBOARD_BASE_URL = "https://uu342234-a85f-8b002f1b.bjb1.seetacloud.com:8443";
+const VIEWER_BASE_URL = "https://u342234-a85f-8b002f1b.bjb1.seetacloud.com:8443";
 const UPLOAD_PROXY_BASE_URL = `${DASHBOARD_BASE_URL}/upload-proxy`;
 const UPLOAD_TIMEOUT_MS = 20000;
 const MAX_UPLOAD_RETRY = 1;

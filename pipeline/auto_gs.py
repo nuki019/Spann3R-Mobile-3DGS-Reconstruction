@@ -388,14 +388,16 @@ def build_ns_train_command(config: PipelineConfig, data_dir: Optional[Path] = No
         "False",
         "--vis",
         "viewer",
+    ]
+    if config.ns_train_extra_args:
+        command.extend(shlex.split(config.ns_train_extra_args))
+    command.extend([
         "nerfstudio-data",
         "--eval-mode",
         "fraction",
         "--train-split-fraction",
         str(config.train_split_fraction),
-    ]
-    if config.ns_train_extra_args:
-        command.extend(shlex.split(config.ns_train_extra_args))
+    ])
     return command
 
 
