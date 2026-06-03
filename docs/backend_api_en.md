@@ -8,10 +8,11 @@ This document is for backend/frontend integration and reflects the current imple
 
 ## 1. Services and Ports
 
-Default deployment (single-port reuse for RTX 4090 mode):
+Default deployment (AutoDL 6006/6008 path-gateway mode):
 
-- `6006`: upload service in Phase A, then Viewer in Phase C
-- `6008`: dashboard UI, status APIs, and download APIs
+- `6006`: Nerfstudio Viewer
+- `6008`: dashboard UI, status APIs, download APIs, and `/upload-proxy`
+- `7006`: internal upload service port, reachable only inside the instance and proxied by `6008 /upload-proxy`
 
 Recommended startup:
 
@@ -50,9 +51,11 @@ bash restart_backend_stack.sh
   - `POST /api/pipeline/stop`
   - `POST /api/gaussian/export_latest`
 
-## 3. Upload Service APIs (Port 6006)
+## 3. Upload Service APIs (via 6008 path proxy)
 
-Base URL example: `http://127.0.0.1:6006`
+Recommended public/frontend Base URL: `http://127.0.0.1:6008/upload-proxy`.
+
+The upload service listens internally on `127.0.0.1:7006` by default. Do not treat `7006` as an AutoDL public service.
 
 ### 3.1 GET `/`
 
@@ -90,6 +93,11 @@ Returns cumulative upload stats.
 - form fields:
   - `frame_file` (required, `jpg/jpeg/png`)
   - `token` (optional)
+  - `session_id` (optional upload batch ID)
+  - `frame_index` (optional frame index)
+  - `blur_score` (optional frontend sharpness score)
+  - `imu_stable` (optional IMU stability flag)
+  - `captured_at` (optional frontend capture timestamp)
 - header:
   - `X-Auth-Token` (optional, alternative to form token)
 
@@ -100,7 +108,9 @@ Success response:
   "code": 200,
   "msg": "上传成功",
   "filename": "20260418110000_123456_ab12cd34.jpg",
-  "bytes": 582311
+  "bytes": 582311,
+  "session_id": "wx_1780000000_ab12cd34",
+  "sha256": "..."
 }
 ```
 
@@ -114,10 +124,14 @@ Common errors:
 Example:
 
 ```bash
-curl -X POST "http://127.0.0.1:6006/upload" \
+curl -X POST "http://127.0.0.1:6008/upload-proxy/upload" \
   -H "X-Auth-Token: <UPLOAD_AUTH_TOKEN>" \
-  -F "frame_file=@/path/to/frame.jpg"
+  -F "frame_file=@/path/to/frame.jpg" \
+  -F "session_id=test_session" \
+  -F "frame_index=0"
 ```
+
+The upload service writes to a temporary `.part` file and atomically replaces it with the final image, preventing the training watcher from reading partial files. It also appends `_upload_manifest.jsonl` with batch, frame, sha256, and frontend quality metadata.
 
 ## 4. Dashboard and Download APIs (Port 6008)
 
@@ -145,12 +159,20 @@ Response fields:
 
 #### GET `/api/status`
 
-Returns current pipeline process state.
+Returns current pipeline process state, active job, and queue.
 
 ```json
 {
   "running": true,
-  "pid": 12345
+  "pid": 12345,
+  "active_job": {
+    "id": "a1b2c3d4e5f6",
+    "reason": "manual",
+    "created_at": "2026-06-03 10:00:00",
+    "started_at": "2026-06-03 10:00:01"
+  },
+  "queue_length": 1,
+  "queued_jobs": []
 }
 ```
 
@@ -250,12 +272,15 @@ Returns scene-level summary:
 
 #### POST `/api/pipeline/start`
 
-Starts `pipeline.backend_4090`.
+Starts `pipeline.backend_4090`. If a training job is already running, the request is queued instead of launching another GPU-heavy process on the same card.
 
 ```json
 {
   "ok": true,
-  "pid": 23456
+  "pid": 23456,
+  "queued": false,
+  "job_id": "a1b2c3d4e5f6",
+  "queue_length": 0
 }
 ```
 
@@ -266,7 +291,8 @@ Stops the current pipeline process.
 ```json
 {
   "ok": true,
-  "stopped": true
+  "stopped": true,
+  "cleared_queue": 1
 }
 ```
 
@@ -303,9 +329,19 @@ Downloads latest point cloud by preference. `prefer` options:
 - `raw`
 - `any`
 
+`processed=true` is the default. Before download, the server crops by the reference point cloud bounds and applies voxel downsampling to reduce large point-cloud transfers. Use `processed=false` to download the original file.
+
+#### GET `/download/processed/latest?prefer=gaussian`
+
+Forces processed latest download. This is the recommended “optimized latest point cloud” link for the mini-program.
+
 #### GET `/download/{file_id}`
 
 Downloads by file ID.
+
+#### GET `/download/zip`
+
+Downloads a ZIP for multiple point clouds. Supports `scene`, `variant`, `ids`, and `processed`; processed ZIP is the default.
 
 ### 4.8 Manual Gaussian Export
 
@@ -328,7 +364,9 @@ If you run `pointcloud_download_server.py` independently, routes are:
 - `GET /`
 - `GET /healthz`
 - `GET /files`
-- `GET /download/latest?prefer=gaussian`
+- `GET /download/latest?prefer=gaussian` (processed download by default)
+- `GET /download/processed/latest?prefer=gaussian`
+- `GET /download/zip`
 - `GET /download/{file_id}`
 
 Port is controlled by `POINTCLOUD_PORT` (default `6008`).
@@ -339,7 +377,7 @@ Port is controlled by `POINTCLOUD_PORT` (default `6008`).
 
 ```bash
 curl http://127.0.0.1:6008/healthz
-curl http://127.0.0.1:6006/healthz
+curl http://127.0.0.1:6008/upload-proxy/healthz
 ```
 
 2. Confirm `UPLOAD_MAX_FILE_SIZE_MB` before large upload tests.

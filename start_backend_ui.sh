@@ -31,5 +31,6 @@ DASHBOARD_PID=$!
 echo "后端可视化 UI 已启动，PID: ${DASHBOARD_PID}，端口: ${DASHBOARD_PORT}"
 echo "UI 地址: http://0.0.0.0:${DASHBOARD_PORT}"
 echo "点云下载页: http://0.0.0.0:${DASHBOARD_PORT}/downloads"
+echo "上传代理: http://0.0.0.0:${DASHBOARD_PORT}/upload-proxy/upload -> ${UPLOAD_PROXY_TARGET:-http://127.0.0.1:${UPLOAD_INTERNAL_PORT:-7006}}/upload"
 echo "日志: ${LOG_DIR}/backend_dashboard.log"
-echo "端口规划: 6006(上传/Viewer) + ${DASHBOARD_PORT}(UI/下载)"
+echo "端口规划: 6006(Viewer) + ${DASHBOARD_PORT}(UI/下载/上传代理)"

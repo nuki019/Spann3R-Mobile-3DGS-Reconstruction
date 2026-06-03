@@ -30,7 +30,7 @@ Spann3R 是一个面向稀疏到中等密度图像序列的 3D 重建系统，�
 ### 3.1 目录分层
 
 - `pipeline/`：编排与转换
-  - `backend_4090.py`：单卡 4090 单端口阶段式流程
+  - `backend_4090.py`：单卡 4090 的 AutoDL 双端口路径网关流程
   - `auto_gs.py`：自动化流程核心逻辑
   - `spann3r_to_nerfstudio.py`：`npy`/位姿转 `transforms.json`
 - `services/`：HTTP 服务
@@ -42,8 +42,9 @@ Spann3R 是一个面向稀疏到中等密度图像序列的 3D 重建系统，�
 
 ### 3.2 端口与交互
 
-- `6006`：上传与 Viewer 阶段复用
-- `6008`：管理台、状态监控、点云下载
+- `6006`：Nerfstudio Viewer
+- `6008`：管理台、状态监控、点云下载、`/upload-proxy` 上传代理
+- `7006`：内部上传服务端口，仅在实例内监听
 
 该设计满足受限端口环境下的部署需求，避免额外公网端口暴露。
 
@@ -51,7 +52,7 @@ Spann3R 是一个面向稀疏到中等密度图像序列的 3D 重建系统，�
 
 ## 4.1 阶段 A：上传采集
 
-- 用户/前端调用 `POST /upload`
+- 用户/前端调用 `POST /upload-proxy/upload`
 - 文件写入 `WATCH_DIR`
 - 系统根据 `MIN_IMG_COUNT + STABLE_POLLS` 判定“上传完成”
 
@@ -76,15 +77,17 @@ Spann3R 是一个面向稀疏到中等密度图像序列的 3D 重建系统，�
 
 - 管理台实时展示阶段状态、日志、关键指标
 - 下载接口按 `variant` 区分 `raw/downsampled/train/gaussian`
+- 默认下载会进行空间裁切与体素下采样，原始点云通过 `processed=false` 获取
 
 ## 5. 关键工程特性（可写入论文“系统实现”部分）
 
 1. 路线优化：以 Spann3R 重建结果替代慢速 COLMAP 前处理，直接进入 Splatfacto 训练。
-2. 单端口阶段复用：在 6006 上实现“上传与 Viewer 互斥切换”。
+2. 路径网关：用 6008 `/upload-proxy` 代理内部上传服务，6006 固定给 Viewer。
 3. 自动入库：重建后自动组织场景目录与元数据（`transforms.json`）。
 4. 训练后导出：自动执行 Gaussian 导出并产生交付点云。
 5. 结果可追溯：保存测试照片、训练日志、场景目录与最新场景标记。
 6. 后台可观测：通过 dashboard API 提供阶段与进度观测。
+7. 可用性优化：上传原子落盘、任务队列串行训练、下载前裁切/下采样、历史资产自动清理。
 
 ## 6. 关键配置参数
 
@@ -94,6 +97,7 @@ Spann3R 是一个面向稀疏到中等密度图像序列的 3D 重建系统，�
 - 重建参数：`SPANN3R_KF_EVERY`, `SPANN3R_CONF_THRESH`, `SPANN3R_VOXEL_SIZE`, `SPANN3R_RESOLUTION`
 - 训练参数：`TRAIN_SPLIT_FRACTION`, `NS_TRAIN_EXTRA_ARGS`
 - 导出参数：`NS_EXPORT_AFTER_TRAIN`, `GAUSSIAN_CROP_PADDING_RATIO`, `GAUSSIAN_REF_DISTANCE_SCALE`
+- 下载与存储：`PROCESSED_DOWNLOAD_VOXEL_SIZE`, `POINTCLOUD_CACHE_DIR`, `MAX_SCENES_KEEP`, `CLEAR_INPUT_AFTER_SNAPSHOT`
 
 ## 7. 主要输出资产
 
@@ -110,12 +114,12 @@ Spann3R 是一个面向稀疏到中等密度图像序列的 3D 重建系统，�
 ## 8. 论文撰写建议用语（可直接改写）
 
 - “我们的方法采用 Spann3R + Splatfacto 的组合路线，其核心是通过 Spann3R 绕过慢速 COLMAP 前处理流程。”
-- “系统在受限网络环境下采用双端口设计（6006/6008），并通过阶段切换复用 6006 端口用于上传与可视化。”
+- “系统在受限网络环境下采用双端口设计（6006/6008），通过 6008 路径网关代理上传服务，并将 6006 固定用于 Viewer。”
 - “为保证下游 Gaussian Splatting 训练稳定性，系统在重建后统一生成 Nerfstudio 兼容的 `transforms.json` 与结构化场景目录。”
 
 ## 9. 当前边界
 
-- 单端口复用模式下，上传与 Viewer 不并发。
+- 单卡模式下，训练任务采用队列串行执行，不进行多 `ns-train` 并发。
 - 当前默认流程主要针对单机单卡（4090）部署。
 - 训练质量与速度依赖输入图像覆盖度与参数设置。
 

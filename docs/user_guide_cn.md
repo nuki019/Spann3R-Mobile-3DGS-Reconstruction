@@ -8,12 +8,10 @@
 
 - 管理台：`http://<HOST>:6008/`
 - 下载页：`http://<HOST>:6008/downloads`
-- 上传/Viewer 共用端口：`http://<HOST>:6006/`
+- 上传接口：`http://<HOST>:6008/upload-proxy/upload`
+- Viewer：`http://<HOST>:6006/`
 
-注意：`6006` 在不同阶段用途不同。
-
-- 上传阶段：`6006` 用于接收图片
-- 训练阶段：`6006` 用于 Viewer 可视化
+注意：小程序端不使用 WebView。需要查看 Viewer 或下载结果时，复制链接到浏览器或电脑端打开。
 
 ## 2. 首次启动
 
@@ -40,7 +38,7 @@ cd /root/autodl-tmp/Spann3R
 bash restart_backend_stack.sh
 ```
 
-该命令会自动停止旧进程并重新拉起 6008 + 6006。
+该命令会自动停止旧进程并重新拉起 6008 管理台、6008 上传代理与 6006 Viewer 流程。
 
 ## 4. 一次完整操作流程
 
@@ -53,7 +51,7 @@ bash restart_backend_stack.sh
 可通过你的前端页面上传，也可用接口上传：
 
 ```bash
-curl -X POST "http://<HOST>:6006/upload" \
+curl -X POST "http://<HOST>:6008/upload-proxy/upload" \
   -F "frame_file=@/path/to/frame.jpg"
 ```
 
@@ -90,13 +88,15 @@ curl -X POST "http://<HOST>:6006/upload" \
 - `*_downsampled.ply`：下采样点云（训练默认使用）
 - `*_gaussian_clipped.ply`：训练导出并裁切后的交付点云
 
+默认下载会进行空间裁切和二次下采样，适合演示与移动端转发；如果确实需要完整原始文件，可在下载链接后添加 `processed=false`。
+
 ## 5. 常见问题
 
-### 5.1 6006 打不开
+### 5.1 6006 Viewer 打不开
 
 可能原因：
 
-- 还在上传阶段，Viewer 尚未启动
+- 还未进入 Gaussian 训练阶段，Viewer 尚未启动
 - 进程异常退出
 
 处理：
@@ -121,6 +121,7 @@ curl -X POST "http://<HOST>:6006/upload" \
 - 图片数量是否达到 `MIN_IMG_COUNT`
 - 上传目录是否仍在持续变化（系统会等待稳定）
 - `.env.pipeline.4090` 的 `WATCH_DIR` 是否正确
+- 6008 管理台是否能访问 `/upload-proxy/healthz`
 
 ## 6. 日志位置
 
@@ -131,6 +132,6 @@ curl -X POST "http://<HOST>:6006/upload" \
 
 ## 7. 关键结论
 
-- 平时只需要记住两个端口：`6006` 和 `6008`
+- 平时只需要记住两个公网端口：`6006` 和 `6008`
 - 最常用命令只有一个：`bash restart_backend_stack.sh`
 - 以管理台 `6008` 作为总入口，观察全流程状态最稳

@@ -30,7 +30,7 @@ The repository keeps original research modules (`spann3r/`, `train.py`, `eval.py
 ### 3.1 Layered Structure
 
 - `pipeline/`: orchestration and conversion
-  - `backend_4090.py`: staged single-port flow for RTX 4090
+  - `backend_4090.py`: AutoDL two-port path-gateway flow for RTX 4090
   - `auto_gs.py`: core automated pipeline logic
   - `spann3r_to_nerfstudio.py`: converts `npy` poses to `transforms.json`
 - `services/`: HTTP services
@@ -42,8 +42,9 @@ The repository keeps original research modules (`spann3r/`, `train.py`, `eval.py
 
 ### 3.2 Port Design
 
-- `6006`: reused by upload phase and Viewer phase
-- `6008`: dashboard, monitoring, and downloads
+- `6006`: Nerfstudio Viewer
+- `6008`: dashboard, monitoring, downloads, and `/upload-proxy`
+- `7006`: internal upload service, bound inside the instance only
 
 This supports constrained network deployments with minimal public ports.
 
@@ -51,7 +52,7 @@ This supports constrained network deployments with minimal public ports.
 
 ## 4.1 Phase A: Upload Ingestion
 
-- frontend/user calls `POST /upload`
+- frontend/user calls `POST /upload-proxy/upload`
 - files are saved to `WATCH_DIR`
 - completion is detected by `MIN_IMG_COUNT + STABLE_POLLS`
 
@@ -76,15 +77,17 @@ This supports constrained network deployments with minimal public ports.
 
 - dashboard shows phase state, logs, and key metrics
 - download APIs expose variants: `raw/downsampled/train/gaussian`
+- downloads are processed by default with spatial cropping and voxel downsampling; original files are available via `processed=false`
 
 ## 5. Key Engineering Features (Useful in “System Implementation” Section)
 
 1. Pipeline acceleration: Spann3R replaces slow COLMAP preprocessing so training can start earlier.
-2. Single-port phase reuse: mutual switch between upload and Viewer on 6006.
+2. Path gateway: `6008 /upload-proxy` proxies the internal upload service while `6006` stays dedicated to Viewer.
 3. Automatic dataset assembly: consistent scene directory + `transforms.json`.
 4. Post-training export: automatic Gaussian export with deliverable artifacts.
 5. Traceability: retained photo snapshots, logs, scene records, latest-scene marker.
 6. Observability: dashboard APIs for pipeline state and progress.
+7. Usability optimization: atomic upload writes, serial training queue, processed downloads, and retention cleanup.
 
 ## 6. Important Runtime Config
 
@@ -94,6 +97,7 @@ Defined in `.env.pipeline.4090`:
 - reconstruction: `SPANN3R_KF_EVERY`, `SPANN3R_CONF_THRESH`, `SPANN3R_VOXEL_SIZE`, `SPANN3R_RESOLUTION`
 - training: `TRAIN_SPLIT_FRACTION`, `NS_TRAIN_EXTRA_ARGS`
 - export: `NS_EXPORT_AFTER_TRAIN`, `GAUSSIAN_CROP_PADDING_RATIO`, `GAUSSIAN_REF_DISTANCE_SCALE`
+- download/storage: `PROCESSED_DOWNLOAD_VOXEL_SIZE`, `POINTCLOUD_CACHE_DIR`, `MAX_SCENES_KEEP`, `CLEAR_INPUT_AFTER_SNAPSHOT`
 
 ## 7. Main Output Artifacts
 
@@ -110,12 +114,12 @@ A scene typically includes:
 ## 8. Suggested Paper Wording (Editable)
 
 - “Our method combines Spann3R with Splatfacto-based Gaussian Splatting training, and its core value is bypassing the slow COLMAP preprocessing stage.”
-- “Under constrained networking, the system uses a two-port design (6006/6008) and stage-based port reuse to support both upload and visualization.”
+- “Under constrained networking, the system uses a two-port design (6006/6008), proxies uploads through the 6008 path gateway, and keeps 6006 dedicated to Viewer.”
 - “To stabilize downstream Gaussian Splatting training, reconstruction outputs are normalized into Nerfstudio-compatible scene directories with generated `transforms.json`.”
 
 ## 9. Current Boundaries
 
-- In single-port mode, upload and Viewer are not concurrent.
+- On a single GPU, training jobs are queued serially instead of running multiple `ns-train` processes concurrently.
 - Default deployment target is single-machine single-GPU (RTX 4090).
 - Quality/runtime depend on image coverage and runtime parameter settings.
 

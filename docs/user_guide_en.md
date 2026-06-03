@@ -8,12 +8,10 @@ Replace `<HOST>` with your server IP/domain.
 
 - Dashboard: `http://<HOST>:6008/`
 - Download page: `http://<HOST>:6008/downloads`
-- Shared upload/viewer port: `http://<HOST>:6006/`
+- Upload API: `http://<HOST>:6008/upload-proxy/upload`
+- Viewer: `http://<HOST>:6006/`
 
-Important: port `6006` is reused by phase.
-
-- Upload phase: `6006` receives images
-- Training phase: `6006` serves Nerfstudio Viewer
+Important: the mini-program does not embed WebView. Copy Viewer/download links to a browser or desktop when needed.
 
 ## 2. First Startup
 
@@ -40,7 +38,7 @@ cd /root/autodl-tmp/Spann3R
 bash restart_backend_stack.sh
 ```
 
-This command stops old processes and relaunches both 6008 and 6006 services.
+This command stops old processes and relaunches the 6008 dashboard, 6008 upload proxy, and the 6006 Viewer pipeline.
 
 ## 4. End-to-End Usage Flow
 
@@ -53,7 +51,7 @@ Visit `http://<HOST>:6008/` and make sure it loads.
 You can upload through your frontend, or via API:
 
 ```bash
-curl -X POST "http://<HOST>:6006/upload" \
+curl -X POST "http://<HOST>:6008/upload-proxy/upload" \
   -F "frame_file=@/path/to/frame.jpg"
 ```
 
@@ -90,13 +88,15 @@ Common artifacts:
 - `*_downsampled.ply`: downsampled cloud (default training source)
 - `*_gaussian_clipped.ply`: exported + cropped delivery cloud
 
+Downloads are processed by default with spatial cropping and voxel downsampling. Use `processed=false` only when you need the full original file.
+
 ## 5. Common Issues
 
-### 5.1 Port 6006 Is Not Reachable
+### 5.1 Port 6006 Viewer Is Not Reachable
 
 Possible causes:
 
-- Still in upload phase (viewer not started yet)
+- Gaussian training has not started yet, so Viewer is not running
 - Process exited unexpectedly
 
 Actions:
@@ -121,6 +121,7 @@ Check:
 - image count reached `MIN_IMG_COUNT`
 - upload directory is stable (no ongoing file changes)
 - `WATCH_DIR` in `.env.pipeline.4090` is correct
+- `/upload-proxy/healthz` is reachable through the 6008 dashboard
 
 ## 6. Log Files
 

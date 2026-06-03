@@ -150,7 +150,7 @@ You can specify the `--server_port`, `--share`, `--server_name` arguments to sat
 For a production-style end-to-end pipeline (frontend upload, automatic reconstruction, Gaussian Splatting training, and web viewer), see:
 
 - `docs/auto_pipeline_cn.md`
-- `docs/backend_4090_principles_cn.md` (single RTX 4090, single-port 6006 mode)
+- `docs/backend_4090_principles_cn.md` (single RTX 4090, AutoDL 6006/6008 path-gateway mode)
 - `docs/backend_ui_cn.md` (backend monitoring UI + pointcloud download on 6008)
 - `.env.pipeline.example`
 - `.env.pipeline.4090.example`
@@ -161,7 +161,9 @@ For a production-style end-to-end pipeline (frontend upload, automatic reconstru
 
 - `pipeline/`: orchestration and conversion (`auto_gs.py`, `backend_4090.py`, `spann3r_to_nerfstudio.py`)
 - `services/`: HTTP services (`upload_server.py`, `backend_dashboard.py`, `pointcloud_download_server.py`)
-- Point cloud outputs: both `raw` and `downsampled` clouds are preserved and downloadable; training defaults to downsampled.
+- Upload gateway: frontend uploads through `6008 /upload-proxy/upload`; Nerfstudio Viewer stays on `6006`.
+- Point cloud outputs: both `raw` and `downsampled` clouds are preserved; downloads default to cropped/downsampled processed files, with raw files available via `processed=false`.
+- Single-GPU task handling: repeated start requests are queued and executed serially instead of launching concurrent `ns-train` jobs.
 
 
 ## Training and Evaluation

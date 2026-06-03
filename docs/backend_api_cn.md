@@ -8,10 +8,11 @@
 
 ## 1. 服务与端口
 
-默认部署（4090 单端口复用方案）：
+默认部署（AutoDL 6006/6008 路径网关方案）：
 
-- `6006`：上传服务（阶段 A），训练开始后切换为 Viewer（阶段 C）
-- `6008`：管理台 UI、状态接口、下载接口
+- `6006`：Nerfstudio Viewer
+- `6008`：管理台 UI、状态接口、下载接口、`/upload-proxy` 上传代理
+- `7006`：上传服务内部端口（仅实例内访问，由 `6008 /upload-proxy` 转发）
 
 推荐启动：
 
@@ -50,9 +51,11 @@ bash restart_backend_stack.sh
   - `POST /api/pipeline/stop`
   - `POST /api/gaussian/export_latest`
 
-## 3. 上传服务 API（端口 6006）
+## 3. 上传服务 API（经 6008 路径代理）
 
-Base URL 示例：`http://127.0.0.1:6006`
+对前端与公网访问，推荐 Base URL：`http://127.0.0.1:6008/upload-proxy`。
+
+内部上传服务默认监听 `127.0.0.1:7006`，不要把 `7006` 当作 AutoDL 公网服务使用。
 
 ### 3.1 GET `/`
 
@@ -92,6 +95,11 @@ Base URL 示例：`http://127.0.0.1:6006`
 - 表单：
   - `frame_file`（必填，`jpg/jpeg/png`）
   - `token`（可选）
+  - `session_id`（可选，上传批次 ID）
+  - `frame_index`（可选，帧序号）
+  - `blur_score`（可选，前端清晰度评分）
+  - `imu_stable`（可选，IMU 稳定性标记）
+  - `captured_at`（可选，前端采集时间戳）
 - Header：
   - `X-Auth-Token`（可选，与 `token` 二选一）
 
@@ -102,7 +110,9 @@ Base URL 示例：`http://127.0.0.1:6006`
   "code": 200,
   "msg": "上传成功",
   "filename": "20260418110000_123456_ab12cd34.jpg",
-  "bytes": 582311
+  "bytes": 582311,
+  "session_id": "wx_1780000000_ab12cd34",
+  "sha256": "..."
 }
 ```
 
@@ -116,10 +126,14 @@ Base URL 示例：`http://127.0.0.1:6006`
 示例：
 
 ```bash
-curl -X POST "http://127.0.0.1:6006/upload" \
+curl -X POST "http://127.0.0.1:6008/upload-proxy/upload" \
   -H "X-Auth-Token: <UPLOAD_AUTH_TOKEN>" \
-  -F "frame_file=@/path/to/frame.jpg"
+  -F "frame_file=@/path/to/frame.jpg" \
+  -F "session_id=test_session" \
+  -F "frame_index=0"
 ```
+
+上传服务采用临时 `.part` 文件写入后原子替换为正式图片，避免训练监听器读到半截文件；每次上传会追加 `_upload_manifest.jsonl`，记录批次、帧号、sha256 与前端质量元数据。
 
 ## 4. 管理台与下载 API（端口 6008）
 
@@ -147,12 +161,20 @@ Base URL 示例：`http://127.0.0.1:6008`
 
 #### GET `/api/status`
 
-返回当前流水线进程状态。
+返回当前流水线进程状态、当前任务与等待队列。
 
 ```json
 {
   "running": true,
-  "pid": 12345
+  "pid": 12345,
+  "active_job": {
+    "id": "a1b2c3d4e5f6",
+    "reason": "manual",
+    "created_at": "2026-06-03 10:00:00",
+    "started_at": "2026-06-03 10:00:01"
+  },
+  "queue_length": 1,
+  "queued_jobs": []
 }
 ```
 
@@ -252,12 +274,15 @@ Base URL 示例：`http://127.0.0.1:6008`
 
 #### POST `/api/pipeline/start`
 
-启动 `pipeline.backend_4090`。
+启动 `pipeline.backend_4090`。如果当前已有训练任务运行，新请求会进入等待队列，不会在同一张 GPU 上并发启动多个 `ns-train`。
 
 ```json
 {
   "ok": true,
-  "pid": 23456
+  "pid": 23456,
+  "queued": false,
+  "job_id": "a1b2c3d4e5f6",
+  "queue_length": 0
 }
 ```
 
@@ -268,7 +293,8 @@ Base URL 示例：`http://127.0.0.1:6008`
 ```json
 {
   "ok": true,
-  "stopped": true
+  "stopped": true,
+  "cleared_queue": 1
 }
 ```
 
@@ -305,9 +331,19 @@ Base URL 示例：`http://127.0.0.1:6008`
 - `raw`
 - `any`
 
+默认 `processed=true`，会在下载前按参考点云空间裁切并体素下采样，以降低大点云下载体积。下载原始文件时传 `processed=false`。
+
+#### GET `/download/processed/latest?prefer=gaussian`
+
+等价于强制 `processed=true` 的最新点云下载，适合作为小程序“优化后最新点云”直链。
+
 #### GET `/download/{file_id}`
 
 按文件 ID 下载。
+
+#### GET `/download/zip`
+
+打包下载多个点云，支持 `scene`、`variant`、`ids`、`processed` 参数。默认同样会处理后再打包。
 
 ### 4.8 手动触发 Gaussian 导出
 
@@ -330,7 +366,9 @@ Base URL 示例：`http://127.0.0.1:6008`
 - `GET /`
 - `GET /healthz`
 - `GET /files`
-- `GET /download/latest?prefer=gaussian`
+- `GET /download/latest?prefer=gaussian`（默认处理后下载）
+- `GET /download/processed/latest?prefer=gaussian`
+- `GET /download/zip`
 - `GET /download/{file_id}`
 
 默认端口由 `POINTCLOUD_PORT` 控制（默认 `6008`）。
@@ -341,7 +379,7 @@ Base URL 示例：`http://127.0.0.1:6008`
 
 ```bash
 curl http://127.0.0.1:6008/healthz
-curl http://127.0.0.1:6006/healthz
+curl http://127.0.0.1:6008/upload-proxy/healthz
 ```
 
 2. 上传压测前明确 `UPLOAD_MAX_FILE_SIZE_MB`。

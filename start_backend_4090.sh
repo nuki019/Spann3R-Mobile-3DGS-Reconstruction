@@ -23,7 +23,8 @@ fi
 
 nohup python -u -m pipeline.backend_4090 > "${LOG_DIR}/backend_4090.log" 2>&1 &
 PID=$!
+echo "${PID}" > "${LOG_DIR}/backend_4090.pid"
 
 echo "4090 后端已启动，PID: ${PID}"
 echo "日志: ${LOG_DIR}/backend_4090.log"
-echo "单端口复用: 6006（先上传，后 viewer）"
+echo "端口规划: 6008 /upload-proxy -> 内部上传端口 ${UPLOAD_INTERNAL_PORT:-${UPLOAD_PORT:-7006}}，6006 固定留给 Viewer"

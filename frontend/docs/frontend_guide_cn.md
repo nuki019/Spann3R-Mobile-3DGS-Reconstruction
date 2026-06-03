@@ -8,7 +8,7 @@
 
 - 采集端：调用相机与 IMU，进行“稳定性 + 清晰度”双筛选，生成可上传有效帧
 - 联调面板：展示 6006/6008 健康与状态，支持启动/停止流程、导出 Gaussian、复制各接口地址
-- 上传职责：将有效帧以 `multipart/form-data` 上传到 `POST /upload`
+- 上传职责：将有效帧以 `multipart/form-data` 上传到 `POST /upload-proxy/upload`
 
 前端不承担训练与重建，仅承担“输入采集 + 状态观测 + 操作入口”。
 
@@ -29,7 +29,7 @@
 - IMU 稳定性筛选：加速度计 + 陀螺仪
 - 清晰度筛选：Laplacian 方差阈值
 - 有效帧统计：总帧、有效帧、模糊淘汰数
-- 上传到 6006：按“`phase + 6008 /healthz` 联合判定”允许上传，上传完成后跳转状态页
+- 上传到 6008 路径代理：按“`phase + 6008 /healthz` 联合判定”允许上传，上传完成后跳转状态页
 
 关键状态字段：
 
@@ -53,16 +53,18 @@
 
 端口映射（当前线上网关）：
 
-- 后端 `6006` 映射到前端访问地址：`https://u342234-nrj1-e55849b5.bjb2.seetacloud.com:8443`
-- 后端 `6008` 映射到前端访问地址：`https://uu342234-nrj1-e55849b5.bjb2.seetacloud.com:8443`
+- 后端 `6006` 映射到前端 Viewer 地址：`https://u342234-z010-6c5b5490.bjb2.seetacloud.com:8443`
+- 后端 `6008` 映射到前端管理/上传/下载地址：`https://uu342234-z010-6c5b5490.bjb2.seetacloud.com:8443`
 
-## 4.1 6006（上传 / Viewer）
+## 4.1 6006（Viewer）
 
-- `POST /upload`：上传图片（字段：`frame_file`，可选 `token`）
-- `GET /healthz`：上传服务健康
-- `GET /stats`：上传累计统计
-- `GET /`：训练阶段 Viewer 地址（阶段复用）
-- 上传路径固定为 `/upload`，前端不再探测历史遗留上传路径。
+- `GET /`：训练阶段 Viewer 地址
+
+## 4.2 6008（管理 / 上传代理 / 下载）
+
+- `POST /upload-proxy/upload`：上传图片（字段：`frame_file`，可选 `token/session_id/frame_index/blur_score/imu_stable/captured_at`）
+- `GET /upload-proxy/healthz`：上传代理健康
+- `GET /upload-proxy/stats`：上传累计统计
 - 前端上传门控健康检查统一使用 `6008 /healthz`（即 `uu...:8443/healthz`）。
 
 前端文件：
@@ -70,7 +72,7 @@
 - 上传实现：`utils/oss_upload_utils.js`
 - 上传触发：`pages/capture/capture.js -> syncToBackend`
 
-## 4.2 6008（管理 / 状态 / 下载）
+## 4.3 6008（管理 / 状态 / 下载）
 
 读取接口（轮询）：
 
@@ -91,13 +93,15 @@
 
 - `GET /downloads`
 - `GET /files`
-- `GET /download/latest?prefer=gaussian`
+- `GET /download/processed/latest?prefer=gaussian`
+- `GET /download/latest?prefer=gaussian&processed=false`
+- `GET /download/zip?variant=gaussian`
 
 ## 5. 鉴权对齐
 
 按后端文档的 token 规则，前端对应两类 token：
 
-- 上传 token：`UPLOAD_AUTH_TOKEN`（用于 `POST /upload`）
+- 上传 token：`UPLOAD_AUTH_TOKEN`（用于 `POST /upload-proxy/upload`）
 - 管理 token：`DASHBOARD_AUTH_TOKEN`（用于 dashboard 的 `POST` 接口）
 
 配置位置：
@@ -113,12 +117,12 @@
 
 按后端联调建议分频轮询：
 
-- 高频（2.5 秒）：`/api/status`、`/api/progress`、`6008 /healthz`、`/stats`
+- 高频（2.5 秒）：`/api/status`、`/api/progress`、`6008 /healthz`、`/upload-proxy/stats`
 - 中频（5 秒）：`/api/logs?lines=200`
 - 低频（10 秒）：`/api/uploads/summary`、`/api/scenes/summary`
 
 前端显示“最近刷新时间”和“部分接口失败”提示，便于联调定位。
-说明：在 `phase=spann3r/gaussian/completed` 时，`6006` 可能已切到 Viewer，`/stats` 失败属于预期现象；上传门控只看 `uu.../healthz`。
+说明：上传统一走 `uu.../upload-proxy/upload`，Viewer 统一走 `u.../`。小程序不能使用 WebView，因此 Viewer 与下载页只提供复制链接/外部浏览器打开。
 
 ## 7. 近期修复（关键）
 
@@ -183,9 +187,9 @@
 
 前端对后端阶段语义约束如下：
 
-- 阶段 A（phase=input，上传阶段）：前端调用 6006 上传
-- 阶段 C（training）：6006 复用为 Viewer
-- 6006 上传与 Viewer 互斥，不并发
+- 阶段 A（phase=input，上传阶段）：前端调用 6008 `/upload-proxy/upload`
+- 阶段 C（training）：6006 为 Viewer
+- 单卡训练采用后端队列串行执行，前端展示等待队列与当前任务
 
 前端状态机策略：
 
@@ -200,8 +204,8 @@
 
 配置文件：`utils/oss_upload_utils.js`
 
-- `UPLOAD_BASE_URL`：上传/Viewer 访问基地址（当前映射为 `u...:8443`）
-- `DASHBOARD_BASE_URL`：管理/下载访问基地址（当前映射为 `uu...:8443`）
+- `VIEWER_BASE_URL`：Viewer 访问基地址（当前映射为 `u...:8443`）
+- `DASHBOARD_BASE_URL`：管理/上传/下载访问基地址（当前映射为 `uu...:8443`）
 - `UPLOAD_AUTH_TOKEN` / `DASHBOARD_AUTH_TOKEN`
 
 部署检查清单：
@@ -215,5 +219,5 @@
 ## 10. 当前边界
 
 - 小程序仅作为采集与管理入口，不承担重建与训练计算
-- 6006 单端口复用下，上传与 Viewer 不能同时可用
+- 小程序不能内嵌 Viewer，需复制链接后外部打开
 - 采集质量受设备稳定性、视角覆盖、光照与参数阈值影响

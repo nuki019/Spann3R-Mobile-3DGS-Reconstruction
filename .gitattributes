@@ -1,0 +1,7 @@
+*.sh text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.js text eol=lf
+*.wxml text eol=lf
+*.wxss text eol=lf
+*.example text eol=lf

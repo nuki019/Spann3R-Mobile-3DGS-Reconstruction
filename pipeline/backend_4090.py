@@ -14,6 +14,7 @@ from pipeline.auto_gs import (
     export_gaussian_artifacts,
     mark_latest_scene,
     prepare_target_dataset,
+    prune_old_assets,
     run_command,
     run_conversion,
     run_spann3r,
@@ -31,7 +32,8 @@ def apply_default_env() -> None:
         "TEST_PHOTO_ROOT": "/root/autodl-tmp/Spann3R/test_photo_sets",
         "SCENE_NAME_PREFIX": "scene",
         "UPLOAD_SAVE_DIR": "/root/autodl-tmp/input_images",
-        "UPLOAD_PORT": "6006",
+        "UPLOAD_INTERNAL_PORT": "7006",
+        "UPLOAD_PORT": "7006",
         "VIEWER_PORT": "6006",
         "SPANN3R_DEVICE": "cuda:0",
         "SPANN3R_RESOLUTION": "224",
@@ -51,6 +53,9 @@ def apply_default_env() -> None:
         "RUN_ONCE": "true",
         "CLEAR_TARGET_BEFORE_RUN": "true",
         "ARCHIVE_INPUT": "false",
+        "CLEAR_INPUT_AFTER_SNAPSHOT": "true",
+        "MAX_SCENES_KEEP": "5",
+        "MAX_PHOTO_SETS_KEEP": "5",
         "OMP_NUM_THREADS": "1",
         "MKL_NUM_THREADS": "1",
         "NUMEXPR_NUM_THREADS": "1",
@@ -95,11 +100,11 @@ def start_upload_server(port: int, cwd: Path) -> subprocess.Popen:
         "uvicorn",
         "services.upload_server:app",
         "--host",
-        "0.0.0.0",
+        "127.0.0.1",
         "--port",
         str(port),
     ]
-    print(f"🌐 启动上传服务: 0.0.0.0:{port}")
+    print(f"🌐 启动内部上传服务: 127.0.0.1:{port}")
     process = subprocess.Popen(command, cwd=str(cwd))
     time.sleep(1.0)
     if process.poll() is not None:
@@ -130,12 +135,9 @@ def main() -> None:
 
     config = PipelineConfig.from_env()
     config.viewer_port = 6006
-    upload_port = 6006
+    upload_port = int(os.getenv("UPLOAD_INTERNAL_PORT", os.getenv("UPLOAD_PORT", "7006")))
 
-    print("📌 4090 单端口后端模式：上传与 Viewer 都使用 6006（分阶段复用）")
-    stale_pids = terminate_conflicting_ns_train(upload_port)
-    if stale_pids:
-        print(f"🧹 上传阶段前已停止占用端口 {upload_port} 的旧训练进程: {stale_pids}")
+    print("📌 4090 路径网关模式：6008 /upload-proxy -> 内部上传端口，6006 固定留给 Viewer")
     if not wait_for_port_state(upload_port, should_listen=False, timeout_sec=10.0):
         raise RuntimeError(f"端口 {upload_port} 仍被占用，无法启动上传服务。")
     upload_server = start_upload_server(upload_port, config.spann3r_root)
@@ -165,6 +167,7 @@ def main() -> None:
         npy_name=scene_name,
     )
     mark_latest_scene(config.scene_data_root, scene_name)
+    prune_old_assets(config, scene_name)
     archive_input_images(config)
 
     print(f"✅ 场景入库完成: {scene_target_dir}")

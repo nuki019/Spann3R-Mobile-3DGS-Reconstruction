@@ -219,6 +219,112 @@
   box-sizing: border-box;
 }
 
+.pointcloud-summary {
+  background-color: rgba(0, 0, 0, 0.35);
+  border-radius: 12rpx;
+  color: #e6f4ff;
+  font-size: 23rpx;
+  line-height: 1.45;
+  padding: 14rpx;
+  margin-bottom: 14rpx;
+  word-break: break-all;
+}
+
+.download-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12rpx;
+  margin-bottom: 14rpx;
+}
+
+.download-actions .copy-btn {
+  height: 64rpx;
+  line-height: 64rpx;
+  border-radius: 12rpx;
+  font-size: 22rpx;
+}
+
+.copy-main {
+  background-color: #1677ff;
+}
+
+.copy-secondary {
+  background-color: #31445f;
+}
+
+.pointcloud-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+
+.pointcloud-item {
+  background-color: rgba(0, 0, 0, 0.32);
+  border-radius: 12rpx;
+  padding: 14rpx;
+}
+
+.pointcloud-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10rpx;
+  margin-bottom: 8rpx;
+}
+
+.pointcloud-name {
+  flex: 1;
+  color: #fff;
+  font-size: 24rpx;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.pointcloud-badge {
+  flex-shrink: 0;
+  border-radius: 999rpx;
+  background-color: rgba(255, 255, 255, 0.14);
+  color: #d6e4ff;
+  font-size: 20rpx;
+  padding: 4rpx 12rpx;
+}
+
+.badge-gaussian {
+  background-color: rgba(82, 196, 26, 0.22);
+  color: #b7eb8f;
+}
+
+.pointcloud-meta,
+.pointcloud-path {
+  color: #c9d6e6;
+  font-size: 21rpx;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.pointcloud-path {
+  color: #94a9c2;
+  margin-top: 4rpx;
+}
+
+.pointcloud-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10rpx;
+  margin-top: 12rpx;
+}
+
+.mini-copy-btn {
+  height: 56rpx;
+  line-height: 56rpx;
+  border-radius: 10rpx;
+  border: none;
+  margin: 0;
+  background-color: #1677ff;
+  color: #fff;
+  font-size: 21rpx;
+}
+
 .link-block {
   background-color: rgba(0, 0, 0, 0.35);
   border-radius: 12rpx;

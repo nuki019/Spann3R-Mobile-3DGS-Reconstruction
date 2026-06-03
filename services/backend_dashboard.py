@@ -1,4 +1,5 @@
 import hashlib
+import html
 import json
 import os
 import re
@@ -6,14 +7,19 @@ import secrets
 import signal
 import subprocess
 import sys
+import tempfile
 import time
+import uuid
+import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+import httpx
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
 
@@ -25,12 +31,23 @@ PIPELINE_SCRIPT = ROOT_DIR / "pipeline" / "backend_4090.py"
 PIPELINE_MODULE = "pipeline.backend_4090"
 PIPELINE_PID_FILE = LOG_DIR / "backend_4090.pid"
 PIPELINE_LOG_FILE = LOG_DIR / "backend_4090.log"
+PIPELINE_QUEUE_FILE = LOG_DIR / "pipeline_queue.json"
+PIPELINE_ACTIVE_JOB_FILE = LOG_DIR / "pipeline_active_job.json"
 ENV_FILE = ROOT_DIR / ".env.pipeline.4090"
 DASHBOARD_AUTH_TOKEN = os.getenv("DASHBOARD_AUTH_TOKEN", "").strip()
 
 WATCH_DIR = Path(os.getenv("WATCH_DIR", "/root/autodl-tmp/input_images")).resolve()
 SCENE_DATA_ROOT = Path(os.getenv("SCENE_DATA_ROOT", "/root/autodl-tmp/gs_train/scenes")).resolve()
 TEST_PHOTO_ROOT = Path(os.getenv("TEST_PHOTO_ROOT", str(ROOT_DIR / "test_photo_sets"))).resolve()
+POINTCLOUD_CACHE_DIR = Path(os.getenv("POINTCLOUD_CACHE_DIR", "/root/autodl-tmp/pointcloud_processed_cache")).resolve()
+PROCESSED_DOWNLOAD_VOXEL_SIZE = float(os.getenv("PROCESSED_DOWNLOAD_VOXEL_SIZE", "0.02"))
+PROCESSED_DOWNLOAD_PADDING_RATIO = float(os.getenv("PROCESSED_DOWNLOAD_PADDING_RATIO", "0.03"))
+PROCESSED_DOWNLOAD_MAX_AGE_HOURS = float(os.getenv("PROCESSED_DOWNLOAD_MAX_AGE_HOURS", "24"))
+PROCESSED_DOWNLOAD_MAX_FILES = int(os.getenv("PROCESSED_DOWNLOAD_MAX_FILES", "12"))
+MAX_PIPELINE_QUEUE_SIZE = int(os.getenv("MAX_PIPELINE_QUEUE_SIZE", "3"))
+UPLOAD_INTERNAL_PORT = int(os.getenv("UPLOAD_INTERNAL_PORT", os.getenv("UPLOAD_PORT", "7006")))
+UPLOAD_PROXY_TARGET = os.getenv("UPLOAD_PROXY_TARGET", f"http://127.0.0.1:{UPLOAD_INTERNAL_PORT}").rstrip("/")
+UPLOAD_PROXY_TIMEOUT_SEC = float(os.getenv("UPLOAD_PROXY_TIMEOUT_SEC", "45"))
 
 DEFAULT_POINTCLOUD_ROOTS = [
     "/root/autodl-tmp/gs_train",
@@ -59,7 +76,17 @@ DEFAULT_CONFIG: Dict[str, str] = {
     "GAUSSIAN_CROP_PADDING_RATIO": "0.03",
     "GAUSSIAN_REF_DISTANCE_SCALE": "4.0",
     "NS_EXPORT_EXTRA_ARGS": "",
-    "UPLOAD_PORT": "6006",
+    "POINTCLOUD_CACHE_DIR": str(POINTCLOUD_CACHE_DIR),
+    "PROCESSED_DOWNLOAD_VOXEL_SIZE": str(PROCESSED_DOWNLOAD_VOXEL_SIZE),
+    "PROCESSED_DOWNLOAD_PADDING_RATIO": str(PROCESSED_DOWNLOAD_PADDING_RATIO),
+    "PROCESSED_DOWNLOAD_MAX_AGE_HOURS": str(PROCESSED_DOWNLOAD_MAX_AGE_HOURS),
+    "PROCESSED_DOWNLOAD_MAX_FILES": str(PROCESSED_DOWNLOAD_MAX_FILES),
+    "CLEAR_INPUT_AFTER_SNAPSHOT": "true",
+    "MAX_SCENES_KEEP": "5",
+    "MAX_PHOTO_SETS_KEEP": "5",
+    "UPLOAD_INTERNAL_PORT": str(UPLOAD_INTERNAL_PORT),
+    "UPLOAD_PROXY_TARGET": UPLOAD_PROXY_TARGET,
+    "UPLOAD_PORT": str(UPLOAD_INTERNAL_PORT),
     "VIEWER_PORT": "6006",
     "WATCH_DIR": str(WATCH_DIR),
     "SCENE_DATA_ROOT": str(SCENE_DATA_ROOT),
@@ -86,7 +113,17 @@ CONFIG_HELP: Dict[str, str] = {
     "GAUSSIAN_CROP_PADDING_RATIO": "按 Spann3R 输入点云边界裁切 Gaussian 点云时的边界扩展比例。",
     "GAUSSIAN_REF_DISTANCE_SCALE": "Gaussian 点云到 Spann3R 参考点云的距离过滤倍数（越小越严格）。",
     "NS_EXPORT_EXTRA_ARGS": "透传给 ns-export 的额外参数（高级调参）。",
-    "UPLOAD_PORT": "上传服务端口（4090 后端模式通常为 6006）。",
+    "POINTCLOUD_CACHE_DIR": "处理后下载点云缓存目录，建议放在 /root/autodl-tmp 数据盘。",
+    "PROCESSED_DOWNLOAD_VOXEL_SIZE": "下载前二次体素下采样尺寸，值越大文件越小。",
+    "PROCESSED_DOWNLOAD_PADDING_RATIO": "下载前按参考点云空间裁切的边界扩展比例。",
+    "PROCESSED_DOWNLOAD_MAX_AGE_HOURS": "处理后点云缓存保留小时数。",
+    "PROCESSED_DOWNLOAD_MAX_FILES": "处理后点云缓存最多保留文件数。",
+    "CLEAR_INPUT_AFTER_SNAPSHOT": "场景照片快照完成后是否清理上传目录。",
+    "MAX_SCENES_KEEP": "最多保留的历史训练场景目录数量。",
+    "MAX_PHOTO_SETS_KEEP": "最多保留的历史测试照片集数量。",
+    "UPLOAD_INTERNAL_PORT": "上传服务内部监听端口；通过 6008 的 /upload-proxy 对外访问。",
+    "UPLOAD_PROXY_TARGET": "6008 管理台内部上传代理目标，默认 http://127.0.0.1:UPLOAD_INTERNAL_PORT。",
+    "UPLOAD_PORT": "上传服务内部端口；建议与 UPLOAD_INTERNAL_PORT 保持一致。",
     "VIEWER_PORT": "Nerfstudio Viewer 端口。",
     "WATCH_DIR": "上传照片落盘目录。",
     "SCENE_DATA_ROOT": "多场景训练数据根目录（每次自动新建场景子目录）。",
@@ -231,6 +268,17 @@ def under_allowed_roots(path: Path) -> bool:
     return False
 
 
+def is_downloadable_path(path: Path) -> bool:
+    resolved = path.resolve()
+    if under_allowed_roots(resolved):
+        return True
+    try:
+        resolved.relative_to(POINTCLOUD_CACHE_DIR)
+        return True
+    except ValueError:
+        return False
+
+
 def infer_pointcloud_variant(file_path: Path) -> str:
     path_text = str(file_path).lower()
     name = file_path.name.lower()
@@ -259,9 +307,15 @@ def infer_scene_name(file_path: Path) -> str:
 
 def discover_pointclouds() -> List[Dict[str, str]]:
     files: List[Path] = []
+    seen_paths = set()
     for root in POINTCLOUD_ROOTS:
         if root.exists():
-            files.extend(root.rglob("*.ply"))
+            for file_path in root.rglob("*.ply"):
+                resolved = file_path.resolve()
+                if resolved in seen_paths:
+                    continue
+                seen_paths.add(resolved)
+                files.append(resolved)
     files = sorted(files, key=lambda p: p.stat().st_mtime_ns, reverse=True)
 
     payload: List[Dict[str, str]] = []
@@ -332,6 +386,227 @@ def index_by_id() -> Dict[str, Path]:
     for item in discover_pointclouds():
         mapping[item["id"]] = Path(item["path"])
     return mapping
+
+
+def format_bytes(size_bytes: int) -> str:
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    size_kb = size_bytes / 1024
+    if size_kb < 1024:
+        return f"{size_kb:.2f} KB"
+    size_mb = size_kb / 1024
+    if size_mb < 1024:
+        return f"{size_mb:.2f} MB"
+    return f"{size_mb / 1024:.2f} GB"
+
+
+def summarize_pointclouds(items: List[Dict[str, str]]) -> Dict[str, object]:
+    scene_map: Dict[str, int] = {}
+    variant_map: Dict[str, int] = {}
+    total_bytes = 0
+    latest_item: Optional[Dict[str, str]] = items[0] if items else None
+    for item in items:
+        scene_map[item["scene"]] = scene_map.get(item["scene"], 0) + 1
+        variant_map[item["variant"]] = variant_map.get(item["variant"], 0) + 1
+        try:
+            total_bytes += int(item["size_bytes"])
+        except (TypeError, ValueError):
+            pass
+    return {
+        "count": len(items),
+        "total_bytes": total_bytes,
+        "total_size": format_bytes(total_bytes),
+        "latest": latest_item,
+        "scenes": scene_map,
+        "variants": variant_map,
+    }
+
+
+def filter_pointclouds(
+    items: List[Dict[str, str]],
+    scene: str = "",
+    variant: str = "",
+    ids: str = "",
+) -> List[Dict[str, str]]:
+    selected = items
+    scene = (scene or "").strip()
+    variant = (variant or "").strip().lower()
+    id_set = {item.strip() for item in (ids or "").split(",") if item.strip()}
+    if id_set:
+        selected = [item for item in selected if item["id"] in id_set]
+    if scene:
+        selected = [item for item in selected if item["scene"] == scene]
+    if variant and variant != "any":
+        selected = [item for item in selected if item["variant"] == variant]
+    return selected
+
+
+def build_zip_response(items: List[Dict[str, str]], archive_prefix: str) -> FileResponse:
+    if not items:
+        raise HTTPException(status_code=404, detail="没有匹配的点云文件可打包")
+
+    safe_prefix = re.sub(r"[^A-Za-z0-9_-]+", "_", archive_prefix).strip("_") or "pointclouds"
+    temp = tempfile.NamedTemporaryFile(prefix=f"{safe_prefix}_", suffix=".zip", delete=False)
+    zip_path = Path(temp.name)
+    temp.close()
+
+    used_names: Dict[str, int] = {}
+    written = 0
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for item in items:
+            path = Path(item["path"])
+            if not path.exists() or not is_downloadable_path(path):
+                continue
+            arcname = f"{item['scene']}/{item['variant']}/{path.name}"
+            if arcname in used_names:
+                used_names[arcname] += 1
+                stem = Path(arcname).stem
+                suffix = Path(arcname).suffix
+                arcname = str(Path(arcname).with_name(f"{stem}_{used_names[arcname]}{suffix}"))
+            else:
+                used_names[arcname] = 1
+            archive.write(path, arcname)
+            written += 1
+
+    if written <= 0:
+        zip_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=404, detail="没有可写入压缩包的点云文件")
+
+    return FileResponse(
+        zip_path,
+        filename=f"{safe_prefix}.zip",
+        media_type="application/zip",
+        background=BackgroundTask(lambda: zip_path.unlink(missing_ok=True)),
+    )
+
+
+def parse_bool_query(value: str, default: bool = True) -> bool:
+    if value is None or value == "":
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def prune_processed_cache() -> None:
+    if not POINTCLOUD_CACHE_DIR.exists():
+        return
+    files = [item for item in POINTCLOUD_CACHE_DIR.glob("*.ply") if item.is_file()]
+    now = time.time()
+    max_age_seconds = max(PROCESSED_DOWNLOAD_MAX_AGE_HOURS, 0.5) * 3600
+    for file_path in files:
+        try:
+            if now - file_path.stat().st_mtime > max_age_seconds:
+                file_path.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+    files = [item for item in POINTCLOUD_CACHE_DIR.glob("*.ply") if item.is_file()]
+    files.sort(key=lambda item: item.stat().st_mtime_ns, reverse=True)
+    for old_file in files[max(PROCESSED_DOWNLOAD_MAX_FILES, 1):]:
+        old_file.unlink(missing_ok=True)
+
+
+def find_reference_pointcloud(item: Dict[str, str], items: List[Dict[str, str]]) -> Optional[Path]:
+    if item.get("variant") in {"downsampled", "train", "raw"}:
+        return None
+    scene = item.get("scene", "")
+    for candidate in items:
+        if candidate.get("scene") == scene and candidate.get("variant") == "downsampled":
+            reference = Path(candidate["path"])
+            if reference.exists() and under_allowed_roots(reference):
+                return reference
+    return None
+
+
+def processed_cache_path(
+    source: Path,
+    reference: Optional[Path],
+    voxel_size: float,
+    padding_ratio: float,
+) -> Path:
+    source_stat = source.stat()
+    ref_part = ""
+    if reference and reference.exists():
+        ref_stat = reference.stat()
+        ref_part = f"|{reference}|{ref_stat.st_size}|{ref_stat.st_mtime_ns}"
+    key = hashlib.sha1(
+        (
+            f"{source}|{source_stat.st_size}|{source_stat.st_mtime_ns}"
+            f"{ref_part}|voxel={voxel_size:.6f}|padding={padding_ratio:.6f}"
+        ).encode("utf-8")
+    ).hexdigest()[:16]
+    suffix = source.suffix or ".ply"
+    return POINTCLOUD_CACHE_DIR / f"{source.stem}_processed_{key}{suffix}"
+
+
+def process_pointcloud_for_download(
+    source: Path,
+    reference: Optional[Path],
+    voxel_size: float,
+    padding_ratio: float,
+) -> Path:
+    if not source.exists() or not under_allowed_roots(source):
+        raise HTTPException(status_code=404, detail="点云文件不存在")
+
+    voxel_size = max(float(voxel_size), 0.0)
+    padding_ratio = max(float(padding_ratio), 0.0)
+    POINTCLOUD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    prune_processed_cache()
+    output = processed_cache_path(source, reference, voxel_size, padding_ratio)
+    if output.exists() and output.stat().st_size > 0:
+        return output
+
+    try:
+        import numpy as np
+        import open3d as o3d
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=f"点云处理依赖不可用: {error}") from error
+
+    source_cloud = o3d.io.read_point_cloud(str(source))
+    if len(source_cloud.points) <= 0:
+        raise HTTPException(status_code=400, detail="点云为空，无法处理")
+
+    working_cloud = source_cloud
+    if reference and reference.exists() and under_allowed_roots(reference):
+        reference_cloud = o3d.io.read_point_cloud(str(reference))
+        if len(reference_cloud.points) > 0:
+            source_points = np.asarray(working_cloud.points)
+            reference_points = np.asarray(reference_cloud.points)
+            ref_min = reference_points.min(axis=0)
+            ref_max = reference_points.max(axis=0)
+            ref_extent = np.maximum(ref_max - ref_min, 1e-6)
+            padding = ref_extent * padding_ratio
+            keep_mask = np.logical_and(
+                source_points >= (ref_min - padding),
+                source_points <= (ref_max + padding),
+            ).all(axis=1)
+            keep_indices = np.where(keep_mask)[0]
+            if keep_indices.size > 0:
+                working_cloud = working_cloud.select_by_index(keep_indices.tolist())
+
+    if voxel_size > 0 and len(working_cloud.points) > 0:
+        working_cloud = working_cloud.voxel_down_sample(voxel_size)
+
+    if len(working_cloud.points) <= 0:
+        raise HTTPException(status_code=400, detail="裁切/下采样后点云为空，请降低处理强度")
+
+    ok = o3d.io.write_point_cloud(str(output), working_cloud)
+    if not ok or not output.exists():
+        raise HTTPException(status_code=500, detail="处理后点云写入失败")
+    return output
+
+
+def resolve_download_path(
+    item: Dict[str, str],
+    all_items: List[Dict[str, str]],
+    processed: bool,
+    voxel_size: float = PROCESSED_DOWNLOAD_VOXEL_SIZE,
+    padding_ratio: float = PROCESSED_DOWNLOAD_PADDING_RATIO,
+) -> Path:
+    source = Path(item["path"])
+    if not processed:
+        return source
+    reference = find_reference_pointcloud(item, all_items)
+    return process_pointcloud_for_download(source, reference, voxel_size, padding_ratio)
 
 
 def discover_uploaded_images(limit: int = 200) -> List[Dict[str, str]]:
@@ -557,7 +832,66 @@ def build_phase_status(logs: List[str], running: bool, progress: Dict[str, Optio
     return {"phase": phase, "sections": sections}
 
 
-def start_pipeline() -> int:
+def read_json_file(path: Path, default):
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return default
+
+
+def write_json_file(path: Path, payload) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def read_pipeline_queue() -> List[Dict[str, object]]:
+    payload = read_json_file(PIPELINE_QUEUE_FILE, [])
+    return payload if isinstance(payload, list) else []
+
+
+def write_pipeline_queue(queue: List[Dict[str, object]]) -> None:
+    write_json_file(PIPELINE_QUEUE_FILE, queue)
+
+
+def read_active_job() -> Dict[str, object]:
+    payload = read_json_file(PIPELINE_ACTIVE_JOB_FILE, {})
+    return payload if isinstance(payload, dict) else {}
+
+
+def write_active_job(job: Dict[str, object]) -> None:
+    write_json_file(PIPELINE_ACTIVE_JOB_FILE, job)
+
+
+def build_pipeline_job(reason: str = "manual") -> Dict[str, object]:
+    return {
+        "id": uuid.uuid4().hex[:12],
+        "reason": reason,
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def enqueue_pipeline_job(reason: str = "manual") -> Dict[str, object]:
+    queue = read_pipeline_queue()
+    if len(queue) >= MAX_PIPELINE_QUEUE_SIZE:
+        raise HTTPException(status_code=409, detail=f"队列已满，最多保留 {MAX_PIPELINE_QUEUE_SIZE} 个等待任务")
+    job = build_pipeline_job(reason)
+    queue.append(job)
+    write_pipeline_queue(queue)
+    return job
+
+
+def dequeue_pipeline_job() -> Optional[Dict[str, object]]:
+    queue = read_pipeline_queue()
+    if not queue:
+        return None
+    job = queue.pop(0)
+    write_pipeline_queue(queue)
+    return job
+
+
+def start_pipeline_process(job: Dict[str, object]) -> int:
     pid = get_running_pipeline_pid()
     if pid:
         return pid
@@ -566,7 +900,10 @@ def start_pipeline() -> int:
         raise HTTPException(status_code=500, detail=f"脚本不存在: {PIPELINE_SCRIPT}")
 
     with PIPELINE_LOG_FILE.open("a", encoding="utf-8") as log_file:
-        log_file.write(f"\n===== START {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
+        log_file.write(
+            f"\n===== START {time.strftime('%Y-%m-%d %H:%M:%S')} "
+            f"JOB {job.get('id', '-')} =====\n"
+        )
 
     log_stream = PIPELINE_LOG_FILE.open("a", encoding="utf-8")
     try:
@@ -580,7 +917,73 @@ def start_pipeline() -> int:
     finally:
         log_stream.close()
     PIPELINE_PID_FILE.write_text(str(process.pid), encoding="utf-8")
+    active = dict(job)
+    active["pid"] = process.pid
+    active["started_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    write_active_job(active)
     return process.pid
+
+
+def ensure_pipeline_queue_progress() -> Dict[str, object]:
+    pid = get_running_pipeline_pid()
+    queue = read_pipeline_queue()
+    active = read_active_job()
+    if pid:
+        return {
+            "running": True,
+            "pid": pid,
+            "active_job": active,
+            "queue_length": len(queue),
+            "queued_jobs": queue,
+        }
+
+    PIPELINE_ACTIVE_JOB_FILE.unlink(missing_ok=True)
+    next_job = dequeue_pipeline_job()
+    if not next_job:
+        return {
+            "running": False,
+            "pid": None,
+            "active_job": {},
+            "queue_length": len(read_pipeline_queue()),
+            "queued_jobs": read_pipeline_queue(),
+        }
+
+    next_pid = start_pipeline_process(next_job)
+    return {
+        "running": True,
+        "pid": next_pid,
+        "active_job": read_active_job(),
+        "queue_length": len(read_pipeline_queue()),
+        "queued_jobs": read_pipeline_queue(),
+        "started_from_queue": True,
+    }
+
+
+def start_pipeline() -> Dict[str, object]:
+    pid = get_running_pipeline_pid()
+    if pid:
+        job = enqueue_pipeline_job("queued_while_running")
+        queue = read_pipeline_queue()
+        return {
+            "running": True,
+            "pid": pid,
+            "queued": True,
+            "job_id": job["id"],
+            "queue_length": len(queue),
+            "active_job": read_active_job(),
+        }
+
+    PIPELINE_ACTIVE_JOB_FILE.unlink(missing_ok=True)
+    job = build_pipeline_job("manual")
+    pid = start_pipeline_process(job)
+    return {
+        "running": True,
+        "pid": pid,
+        "queued": False,
+        "job_id": job["id"],
+        "queue_length": len(read_pipeline_queue()),
+        "active_job": read_active_job(),
+    }
 
 
 def terminate_pipeline_tree(pid: int, sig: int) -> None:
@@ -600,18 +1003,74 @@ def stop_pipeline() -> bool:
     pid = get_running_pipeline_pid()
     if not pid:
         PIPELINE_PID_FILE.unlink(missing_ok=True)
+        PIPELINE_ACTIVE_JOB_FILE.unlink(missing_ok=True)
         return False
 
     terminate_pipeline_tree(pid, signal.SIGTERM)
     for _ in range(30):
         if not process_alive(pid):
             PIPELINE_PID_FILE.unlink(missing_ok=True)
+            PIPELINE_ACTIVE_JOB_FILE.unlink(missing_ok=True)
             return True
         time.sleep(0.2)
 
     terminate_pipeline_tree(pid, signal.SIGKILL)
     PIPELINE_PID_FILE.unlink(missing_ok=True)
+    PIPELINE_ACTIVE_JOB_FILE.unlink(missing_ok=True)
     return True
+
+
+def clear_pipeline_queue() -> int:
+    queue = read_pipeline_queue()
+    write_pipeline_queue([])
+    return len(queue)
+
+
+async def proxy_upload_request(path: str, request: Request) -> Response:
+    target_path = path.strip("/") or ""
+    if target_path not in {"", "upload", "healthz", "stats"}:
+        raise HTTPException(status_code=404, detail="上传代理路径不存在")
+
+    target_url = f"{UPLOAD_PROXY_TARGET}/{target_path}".rstrip("/")
+    headers = {
+        key: value
+        for key, value in request.headers.items()
+        if key.lower() not in {"host", "connection", "content-length"}
+    }
+    body = await request.body()
+    try:
+        async with httpx.AsyncClient(timeout=UPLOAD_PROXY_TIMEOUT_SEC) as client:
+            upstream = await client.request(
+                request.method,
+                target_url,
+                params=request.query_params,
+                content=body,
+                headers=headers,
+            )
+    except httpx.RequestError as error:
+        raise HTTPException(status_code=502, detail=f"上传代理连接失败: {error}") from error
+
+    response_headers = {
+        key: value
+        for key, value in upstream.headers.items()
+        if key.lower() not in {"content-encoding", "content-length", "transfer-encoding"}
+    }
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers=response_headers,
+        media_type=upstream.headers.get("content-type"),
+    )
+
+
+@app.api_route("/upload-proxy", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+async def upload_proxy_root(request: Request) -> Response:
+    return await proxy_upload_request("", request)
+
+
+@app.api_route("/upload-proxy/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+async def upload_proxy(path: str, request: Request) -> Response:
+    return await proxy_upload_request(path, request)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -708,6 +1167,7 @@ async def index() -> str:
           <button class="btn-danger" onclick="clearPointclouds()">一键清空历史点云</button>
         </div>
         <div id="statusLine" class="line"></div>
+        <div id="queueLine" class="line"></div>
         <div id="progressLine" class="line"></div>
         <div class="progress"><div id="progressFill"></div></div>
         <div id="uploadLine" class="line"></div>
@@ -859,6 +1319,21 @@ async def index() -> str:
       document.getElementById("latestSceneChip").textContent = latestScene || "-";
     }
 
+    function renderQueueStatus(status) {
+      const queueLength = Number(status.queue_length ?? 0);
+      const activeJob = status.active_job || {};
+      const queuedJobs = Array.isArray(status.queued_jobs) ? status.queued_jobs : [];
+      const activeText = activeJob.id
+        ? `当前任务: ${activeJob.id} | 启动: ${activeJob.started_at || activeJob.created_at || "-"}`
+        : "当前任务: -";
+      const nextJob = queuedJobs.length > 0 ? queuedJobs[0] : null;
+      const nextText = nextJob
+        ? ` | 下一个: ${nextJob.id || "-"} (${nextJob.created_at || "-"})`
+        : "";
+      const queuedHint = status.started_from_queue ? " | 已自动接续队列任务" : "";
+      return `${activeText} | 等待队列: ${queueLength}${nextText}${queuedHint}`;
+    }
+
     async function refresh() {
       try {
         const [status, progress, logs, uploads, scenes] = await Promise.all([
@@ -871,6 +1346,8 @@ async def index() -> str:
 
         document.getElementById("statusLine").textContent =
           `运行状态: ${status.running ? "运行中" : "未运行"} | PID: ${status.pid ?? "-"} | 阶段: ${phaseLabel(progress.phase)}`;
+
+        document.getElementById("queueLine").textContent = renderQueueStatus(status);
 
         document.getElementById("progressLine").textContent =
           `训练步数: ${progress.step ?? "-"} | Loss: ${progress.loss ?? "-"} | 最新日志: ${progress.last_line ?? "-"}`;
@@ -941,13 +1418,19 @@ async def index() -> str:
     }
 
     async function startPipeline() {
-      await apiPost("/api/pipeline/start");
+      const result = await apiPost("/api/pipeline/start");
       await refresh();
+      if (result.queued) {
+        alert(`当前已有任务运行，已加入等待队列。任务: ${result.job_id}，队列长度: ${result.queue_length}`);
+      }
     }
 
     async function stopPipeline() {
-      await apiPost("/api/pipeline/stop");
+      const result = await apiPost("/api/pipeline/stop");
       await refresh();
+      if (result.cleared_queue) {
+        alert(`流程已停止，并清空 ${result.cleared_queue} 个等待任务。`);
+      }
     }
 
     async function exportGaussian() {
@@ -983,8 +1466,7 @@ async def index() -> str:
 
 @app.get("/api/status")
 async def api_status():
-    pid = get_running_pipeline_pid()
-    return {"running": bool(pid), "pid": pid}
+    return ensure_pipeline_queue_progress()
 
 
 @app.get("/api/config")
@@ -1089,14 +1571,16 @@ async def api_pointclouds_clear(_: None = Depends(require_dashboard_token)):
 
 @app.post("/api/pipeline/start")
 async def api_start(_: None = Depends(require_dashboard_token)):
-    pid = start_pipeline()
-    return {"ok": True, "pid": pid}
+    result = start_pipeline()
+    result["ok"] = True
+    return result
 
 
 @app.post("/api/pipeline/stop")
 async def api_stop(_: None = Depends(require_dashboard_token)):
     stopped = stop_pipeline()
-    return {"ok": True, "stopped": stopped}
+    cleared = clear_pipeline_queue()
+    return {"ok": True, "stopped": stopped, "cleared_queue": cleared}
 
 
 @app.post("/api/gaussian/export_latest")
@@ -1159,15 +1643,43 @@ async def healthz():
 
 
 @app.get("/downloads", response_class=HTMLResponse)
-async def downloads_page():
-    files = discover_pointclouds()
+async def downloads_page(scene: str = "", variant: str = ""):
+    all_files = discover_pointclouds()
+    files = filter_pointclouds(all_files, scene=scene, variant=variant)
+    summary = summarize_pointclouds(files)
+    scene_options = sorted(summarize_pointclouds(all_files)["scenes"].keys())
+    variant_options = ["any", "gaussian", "downsampled", "train", "raw", "other"]
+
+    scene_select = ["<option value=''>全部场景</option>"]
+    for scene_name in scene_options:
+        selected = " selected" if scene_name == scene else ""
+        escaped = html.escape(scene_name)
+        scene_select.append(f"<option value='{escaped}'{selected}>{escaped}</option>")
+
+    variant_select = []
+    selected_variant = (variant or "any").lower()
+    for variant_name in variant_options:
+        selected = " selected" if variant_name == selected_variant else ""
+        label = "全部类型" if variant_name == "any" else variant_name
+        variant_select.append(f"<option value='{variant_name}'{selected}>{label}</option>")
+
     rows = []
     for item in files[:300]:
+        size_text = format_bytes(int(item["size_bytes"]))
+        zip_url = f"/download/zip?ids={item['id']}"
         rows.append(
-            f"<tr><td>{item['scene']}</td><td>{item['variant']}</td><td>{item['name']}</td><td>{item['size_bytes']}</td>"
-            f"<td>{item['mtime']}</td><td>{item['path']}</td><td><a href='{item['download_url']}'>下载</a></td></tr>"
+            "<tr>"
+            f"<td>{html.escape(item['scene'])}</td>"
+            f"<td><span class='pill pill-{html.escape(item['variant'])}'>{html.escape(item['variant'])}</span></td>"
+            f"<td>{html.escape(item['name'])}</td>"
+            f"<td>{size_text}</td>"
+            f"<td>{html.escape(item['mtime'])}</td>"
+            f"<td>{html.escape(item['path'])}</td>"
+            f"<td><a href='{item['download_url']}'>单文件</a> · <a href='{zip_url}'>ZIP</a></td>"
+            "</tr>"
         )
     table = "\n".join(rows) or "<tr><td colspan='7'>暂无 .ply 文件</td></tr>"
+    zip_query = f"scene={html.escape(scene)}&variant={html.escape(selected_variant)}"
     return f"""
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -1176,36 +1688,111 @@ async def downloads_page():
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>点云下载</title>
   <style>
-    body {{ font-family: sans-serif; margin: 24px; background:#0b1020; color:#e5e7eb; }}
-    table {{ width: 100%; border-collapse: collapse; background:#11192c; }}
-    th, td {{ border: 1px solid #24324c; padding: 8px; word-break: break-all; font-size: 13px; }}
-    a {{ color: #7dd3fc; }}
+    :root {{ --bg:#0b1020; --card:#11192c; --line:#24324c; --text:#e5e7eb; --muted:#9ca3af; --accent:#38bdf8; }}
+    * {{ box-sizing: border-box; }}
+    body {{ font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif; margin: 0; background:var(--bg); color:var(--text); }}
+    .wrap {{ max-width: 1280px; margin: 0 auto; padding: 24px; }}
+    .hero {{ display:flex; justify-content:space-between; gap:16px; align-items:flex-end; margin-bottom:16px; }}
+    h1 {{ margin:0; font-size:28px; }}
+    .muted {{ color:var(--muted); font-size:13px; }}
+    .toolbar {{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:14px; }}
+    select, button {{ border:1px solid #334155; border-radius:10px; padding:8px 10px; background:#0b1223; color:var(--text); font-size:14px; }}
+    button {{ cursor:pointer; background:#2563eb; border-color:#2563eb; }}
+    .stats {{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }}
+    .stat {{ background:#0f1a30; border:1px solid var(--line); border-radius:999px; padding:6px 10px; font-size:13px; color:#bae6fd; }}
+    table {{ width: 100%; border-collapse: collapse; background:var(--card); border:1px solid var(--line); }}
+    th, td {{ border-bottom: 1px solid var(--line); padding: 9px; word-break: break-all; font-size: 13px; text-align:left; }}
+    th {{ color:#cbd5e1; background:#0f1a30; position:sticky; top:0; }}
+    a {{ color: #7dd3fc; text-decoration:none; }}
+    .pill {{ display:inline-block; padding:3px 8px; border-radius:999px; background:#1e293b; color:#dbeafe; }}
+    .pill-gaussian {{ background:#123524; color:#bbf7d0; }}
+    .pill-downsampled {{ background:#33240a; color:#fde68a; }}
   </style>
 </head>
 <body>
-  <h1>训练点云下载</h1>
-  <p>可用目录: {", ".join(str(root) for root in POINTCLOUD_ROOTS)}</p>
-  <p>
-    <a href="/download/latest?prefer=gaussian">下载最新 Gaussian 点云</a> |
-    <a href="/download/latest?prefer=downsampled">下载最新 Spann3R 下采样点云</a> |
-    <a href="/files">JSON列表</a>
-  </p>
-  <table>
-    <thead><tr><th>场景</th><th>类型</th><th>文件名</th><th>大小(bytes)</th><th>更新时间</th><th>路径</th><th>操作</th></tr></thead>
-    <tbody>{table}</tbody>
-  </table>
+  <div class="wrap">
+    <div class="hero">
+      <div>
+        <h1>训练点云下载</h1>
+        <div class="muted">可用目录: {html.escape(", ".join(str(root) for root in POINTCLOUD_ROOTS))}</div>
+      </div>
+      <div class="muted"><a href="/">返回管理台</a> · <a href="/files">JSON列表</a></div>
+    </div>
+    <form class="toolbar" method="get" action="/downloads">
+      <select name="scene">{"".join(scene_select)}</select>
+      <select name="variant">{"".join(variant_select)}</select>
+      <button type="submit">筛选</button>
+      <a href="/download/latest?prefer=gaussian">最新 Gaussian</a>
+      <a href="/download/latest?prefer=downsampled">最新 Spann3R</a>
+      <a href="/download/zip?{zip_query}">打包当前筛选结果</a>
+    </form>
+    <div class="stats">
+      <span class="stat">文件数 {summary["count"]}</span>
+      <span class="stat">总大小 {summary["total_size"]}</span>
+      <span class="stat">场景数 {len(summary["scenes"])}</span>
+    </div>
+    <table>
+      <thead><tr><th>场景</th><th>类型</th><th>文件名</th><th>大小</th><th>更新时间</th><th>路径</th><th>操作</th></tr></thead>
+      <tbody>{table}</tbody>
+    </table>
+  </div>
 </body>
 </html>
 """
 
 
 @app.get("/files")
-async def files():
-    return {"items": discover_pointclouds()}
+async def files(scene: str = "", variant: str = "", ids: str = ""):
+    items = filter_pointclouds(discover_pointclouds(), scene=scene, variant=variant, ids=ids)
+    return {"summary": summarize_pointclouds(items), "items": items}
+
+
+@app.get("/api/pointclouds/summary")
+async def api_pointclouds_summary(scene: str = "", variant: str = ""):
+    items = filter_pointclouds(discover_pointclouds(), scene=scene, variant=variant)
+    return {"summary": summarize_pointclouds(items), "items": items[:200]}
+
+
+@app.get("/download/zip")
+async def download_zip(
+    scene: str = "",
+    variant: str = "",
+    ids: str = "",
+    processed: str = "true",
+    voxel_size: float = PROCESSED_DOWNLOAD_VOXEL_SIZE,
+    padding_ratio: float = PROCESSED_DOWNLOAD_PADDING_RATIO,
+):
+    items = filter_pointclouds(discover_pointclouds(), scene=scene, variant=variant, ids=ids)
+    if parse_bool_query(processed, True):
+        all_items = discover_pointclouds()
+        processed_items = []
+        for item in items:
+            output = resolve_download_path(item, all_items, True, voxel_size, padding_ratio)
+            processed_item = item.copy()
+            processed_item["path"] = str(output)
+            processed_item["name"] = output.name
+            processed_item["size_bytes"] = str(output.stat().st_size)
+            processed_items.append(processed_item)
+        items = processed_items
+    prefix_parts = ["pointclouds"]
+    if scene:
+        prefix_parts.append(scene)
+    if variant and variant != "any":
+        prefix_parts.append(variant)
+    if ids:
+        prefix_parts.append("selected")
+    if parse_bool_query(processed, True):
+        prefix_parts.append("processed")
+    return build_zip_response(items, "_".join(prefix_parts))
 
 
 @app.get("/download/latest")
-async def download_latest(prefer: str = "gaussian"):
+async def download_latest(
+    prefer: str = "gaussian",
+    processed: str = "true",
+    voxel_size: float = PROCESSED_DOWNLOAD_VOXEL_SIZE,
+    padding_ratio: float = PROCESSED_DOWNLOAD_PADDING_RATIO,
+):
     items = discover_pointclouds()
     if not items:
         raise HTTPException(status_code=404, detail="未找到可下载点云")
@@ -1219,16 +1806,48 @@ async def download_latest(prefer: str = "gaussian"):
                 detail="未找到 Gaussian 训练点云（当前可能仍在训练中或尚未导出）",
             )
         raise HTTPException(status_code=404, detail=f"未找到类型为 {prefer} 的点云")
-    path = Path(chosen["path"])
+    path = resolve_download_path(
+        chosen,
+        items,
+        parse_bool_query(processed, True),
+        voxel_size,
+        padding_ratio,
+    )
     return FileResponse(path, filename=path.name, media_type="application/octet-stream")
 
 
+@app.get("/download/processed/latest")
+async def download_processed_latest(
+    prefer: str = "gaussian",
+    voxel_size: float = PROCESSED_DOWNLOAD_VOXEL_SIZE,
+    padding_ratio: float = PROCESSED_DOWNLOAD_PADDING_RATIO,
+):
+    return await download_latest(
+        prefer=prefer,
+        processed="true",
+        voxel_size=voxel_size,
+        padding_ratio=padding_ratio,
+    )
+
+
 @app.get("/download/{file_id}")
-async def download_by_id(file_id: str):
-    mapping = index_by_id()
-    if file_id not in mapping:
+async def download_by_id(
+    file_id: str,
+    processed: str = "true",
+    voxel_size: float = PROCESSED_DOWNLOAD_VOXEL_SIZE,
+    padding_ratio: float = PROCESSED_DOWNLOAD_PADDING_RATIO,
+):
+    items = discover_pointclouds()
+    item = next((entry for entry in items if entry["id"] == file_id), None)
+    if not item:
         raise HTTPException(status_code=404, detail="文件不存在或已过期")
-    path = mapping[file_id]
-    if not path.exists() or not under_allowed_roots(path):
+    path = resolve_download_path(
+        item,
+        items,
+        parse_bool_query(processed, True),
+        voxel_size,
+        padding_ratio,
+    )
+    if not path.exists() or not is_downloadable_path(path):
         raise HTTPException(status_code=404, detail="文件不存在")
     return FileResponse(path, filename=path.name, media_type="application/octet-stream")

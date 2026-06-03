@@ -116,7 +116,11 @@ Page({
     pipelineStopApiUrl: BACKEND_LINKS.pipelineStopApiUrl,
     gaussianExportLatestApiUrl: BACKEND_LINKS.gaussianExportLatestApiUrl,
     downloadsUrl: BACKEND_LINKS.downloadsUrl,
+    filesApiUrl: BACKEND_LINKS.filesApiUrl,
+    pointcloudsSummaryApiUrl: BACKEND_LINKS.pointcloudsSummaryApiUrl,
     latestPointCloudUrl: BACKEND_LINKS.latestPointCloudUrl,
+    optimizedLatestPointCloudUrl: BACKEND_LINKS.optimizedLatestPointCloudUrl,
+    gaussianZipUrl: BACKEND_LINKS.gaussianZipUrl,
     copiedLabel: "",
     isRefreshing: false,
     backendError: "",
@@ -125,6 +129,8 @@ Page({
     uploadStatsText: "-",
     pipelineRunningText: "-",
     pipelinePidText: "-",
+    pipelineQueueText: "-",
+    pipelineJobText: "-",
     phaseKey: "unknown",
     phaseActionHint: "等待后端阶段信息...",
     phaseCanUpload: false,
@@ -138,6 +144,9 @@ Page({
     sceneNameText: "-",
     uploadsSummaryText: "-",
     scenesSummaryText: "-",
+    pointcloudSummaryText: "-",
+    pointcloudList: [],
+    pointcloudError: "",
     logsSummaryText: "-",
     lastUpdatedAt: "-",
     dashboardToken: DASHBOARD_AUTH_TOKEN || "",
@@ -281,9 +290,65 @@ Page({
     return sceneText + " | " + dsText + " | " + photoText + " | " + pcText;
   },
 
+  toDashboardAbsoluteUrl(pathOrUrl) {
+    if (!pathOrUrl) {
+      return "";
+    }
+    if (/^https?:\/\//.test(pathOrUrl)) {
+      return pathOrUrl;
+    }
+    const base = (this.data.dashboardUrl || "").replace(/\/$/, "");
+    const path = pathOrUrl.charAt(0) === "/" ? pathOrUrl : "/" + pathOrUrl;
+    return base + path;
+  },
+
+  withQuery(url, query) {
+    if (!url) {
+      return "";
+    }
+    return url + (url.indexOf("?") >= 0 ? "&" : "?") + query;
+  },
+
+  normalizePointcloudItem(item) {
+    const obj = toObject(item);
+    const sizeValue = Number(obj.size_bytes);
+    const downloadUrl = this.toDashboardAbsoluteUrl(obj.download_url || "");
+    return {
+      id: obj.id || "",
+      scene: obj.scene || "-",
+      variant: obj.variant || "other",
+      name: obj.name || "-",
+      sizeText: Number.isFinite(sizeValue) ? formatBytes(sizeValue) : "-",
+      mtime: obj.mtime || "-",
+      downloadUrl: downloadUrl,
+      rawUrl: this.withQuery(downloadUrl, "processed=false"),
+      zipUrl: this.toDashboardAbsoluteUrl("/download/zip?ids=" + (obj.id || "")),
+      pathText: clipText(obj.path || "", 90)
+    };
+  },
+
+  buildPointcloudSummary(data) {
+    const obj = toObject(data);
+    const summary = toObject(obj.summary);
+    const items = Array.isArray(obj.items) ? obj.items.map((item) => this.normalizePointcloudItem(item)) : [];
+    const count = pickNumber(summary, ["count"]);
+    const totalSize = pickString(summary, ["total_size"]);
+    const latest = toObject(summary.latest);
+    const sceneCount = summary.scenes && typeof summary.scenes === "object" ? Object.keys(summary.scenes).length : 0;
+    const countText = count === null ? "文件数:-" : "文件数:" + count;
+    const sizeText = totalSize ? "总大小:" + totalSize : "总大小:-";
+    const latestText = latest && latest.name ? "最新:" + latest.name : "最新:-";
+    return {
+      text: countText + " | " + sizeText + " | 场景:" + sceneCount + " | " + clipText(latestText, 80),
+      items: items.slice(0, 8)
+    };
+  },
+
   parseStatus(data) {
     const obj = toObject(data);
     const pid = pickNumber(obj, ["pid"]);
+    const queueLength = pickNumber(obj, ["queue_length"]);
+    const activeJob = toObject(obj.active_job);
     let running = false;
     if (typeof obj.running === "boolean") {
       running = obj.running;
@@ -292,7 +357,9 @@ Page({
     }
     return {
       runningText: running ? "运行中" : "未运行",
-      pidText: pid === null ? "-" : String(pid)
+      pidText: pid === null ? "-" : String(pid),
+      queueText: queueLength === null ? "等待队列:-" : "等待队列:" + queueLength,
+      jobText: activeJob && activeJob.id ? activeJob.id + " | " + (activeJob.started_at || activeJob.created_at || "-") : "-"
     };
   },
 
@@ -435,6 +502,8 @@ Page({
         uploadStatsText: uploadStats,
         pipelineRunningText: statusData.runningText,
         pipelinePidText: statusData.pidText,
+        pipelineQueueText: statusData.queueText,
+        pipelineJobText: statusData.jobText,
         phaseKey: phaseState.phaseKey,
         phaseActionHint: phaseState.phaseActionHint,
         phaseCanUpload: phaseState.phaseCanUpload,
@@ -478,10 +547,12 @@ Page({
   refreshSlow() {
     return Promise.allSettled([
       this.requestGet(this.data.uploadsSummaryApiUrl),
-      this.requestGet(this.data.scenesSummaryApiUrl)
+      this.requestGet(this.data.scenesSummaryApiUrl),
+      this.requestGet(this.data.pointcloudsSummaryApiUrl)
     ]).then((resultList) => {
       const uploadsSummary = resultList[0].status === "fulfilled" ? this.buildUploadsSummaryText(resultList[0].value) : "拉取失败";
       const scenesSummary = resultList[1].status === "fulfilled" ? this.buildScenesSummaryText(resultList[1].value) : "拉取失败";
+      const pointcloudData = resultList[2].status === "fulfilled" ? this.buildPointcloudSummary(resultList[2].value) : { text: "拉取失败", items: [] };
 
       this.slowPollFailed = resultList.some((item) => item.status === "rejected");
       this.syncBackendError();
@@ -489,6 +560,9 @@ Page({
       this.setData({
         uploadsSummaryText: uploadsSummary,
         scenesSummaryText: scenesSummary,
+        pointcloudSummaryText: pointcloudData.text,
+        pointcloudList: pointcloudData.items,
+        pointcloudError: resultList[2].status === "rejected" ? "点云清单拉取失败，请检查 /api/pointclouds/summary" : "",
         lastUpdatedAt: formatTime(Date.now())
       });
     }).catch(() => {
@@ -636,6 +710,29 @@ Page({
 
   copyLatestPointCloudUrl() {
     this.copyText(this.data.latestPointCloudUrl, "最新点云地址");
+  },
+
+  copyOptimizedLatestPointCloudUrl() {
+    this.copyText(this.data.optimizedLatestPointCloudUrl, "优化后最新点云地址");
+  },
+
+  copyGaussianZipUrl() {
+    this.copyText(this.data.gaussianZipUrl, "Gaussian打包下载地址");
+  },
+
+  copyPointcloudDownloadUrl(e) {
+    const url = e && e.currentTarget && e.currentTarget.dataset ? e.currentTarget.dataset.url : "";
+    this.copyText(url, "优化后点云地址");
+  },
+
+  copyPointcloudRawUrl(e) {
+    const url = e && e.currentTarget && e.currentTarget.dataset ? e.currentTarget.dataset.url : "";
+    this.copyText(url, "原始点云地址");
+  },
+
+  copyPointcloudZipUrl(e) {
+    const url = e && e.currentTarget && e.currentTarget.dataset ? e.currentTarget.dataset.url : "";
+    this.copyText(url, "单文件ZIP地址");
   },
 
   goBack() {

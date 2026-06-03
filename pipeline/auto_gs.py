@@ -48,6 +48,9 @@ class PipelineConfig:
     run_once: bool
     clear_target_before_run: bool
     archive_input: bool
+    clear_input_after_snapshot: bool
+    max_scene_keep: int
+    max_photo_sets_keep: int
     ns_train_extra_args: str
     ns_output_root: Path
     ns_export_after_train: bool
@@ -86,6 +89,9 @@ class PipelineConfig:
             run_once=_get_env_bool("RUN_ONCE", True),
             clear_target_before_run=_get_env_bool("CLEAR_TARGET_BEFORE_RUN", True),
             archive_input=_get_env_bool("ARCHIVE_INPUT", False),
+            clear_input_after_snapshot=_get_env_bool("CLEAR_INPUT_AFTER_SNAPSHOT", True),
+            max_scene_keep=int(os.getenv("MAX_SCENES_KEEP", "5")),
+            max_photo_sets_keep=int(os.getenv("MAX_PHOTO_SETS_KEEP", "5")),
             ns_train_extra_args=os.getenv("NS_TRAIN_EXTRA_ARGS", "").strip(),
             ns_output_root=Path(os.getenv("NS_OUTPUT_ROOT", str(root / "outputs"))),
             ns_export_after_train=_get_env_bool("NS_EXPORT_AFTER_TRAIN", True),
@@ -319,17 +325,54 @@ def mark_latest_scene(scene_data_root: Path, scene_name: str) -> None:
 
 
 def archive_input_images(config: PipelineConfig) -> None:
-    if not config.archive_input:
-        return
     images = list_images(config.watch_dir)
-    if not images:
+    part_files = sorted(config.watch_dir.glob("*.part")) if config.watch_dir.exists() else []
+    manifest_file = config.watch_dir / "_upload_manifest.jsonl"
+    if not images and not part_files and not manifest_file.exists():
+        return
+
+    if not config.archive_input:
+        if not config.clear_input_after_snapshot:
+            return
+        deleted = 0
+        for image_path in images:
+            image_path.unlink(missing_ok=True)
+            deleted += 1
+        for part_path in part_files:
+            part_path.unlink(missing_ok=True)
+        manifest_file.unlink(missing_ok=True)
+        print(f"🧹 已清理上传目录: {config.watch_dir} (删除 {deleted} 张图片)")
         return
 
     archive_subdir = config.archive_dir / time.strftime("%Y%m%d_%H%M%S")
     archive_subdir.mkdir(parents=True, exist_ok=True)
     for image_path in images:
         shutil.move(str(image_path), archive_subdir / image_path.name)
+    if manifest_file.exists():
+        shutil.move(str(manifest_file), archive_subdir / manifest_file.name)
     print(f"🗄️ 已归档原始图片到: {archive_subdir}")
+
+
+def prune_child_dirs(root: Path, keep: int, protected_name: str = "") -> int:
+    if keep <= 0 or not root.exists():
+        return 0
+    candidates = [item for item in root.iterdir() if item.is_dir() and item.name != protected_name]
+    candidates.sort(key=lambda item: item.stat().st_mtime_ns, reverse=True)
+    deleted = 0
+    for old_dir in candidates[max(keep - 1, 0):]:
+        shutil.rmtree(old_dir, ignore_errors=True)
+        deleted += 1
+    return deleted
+
+
+def prune_old_assets(config: PipelineConfig, current_scene: str) -> None:
+    deleted_scenes = prune_child_dirs(config.scene_data_root, config.max_scene_keep, current_scene)
+    deleted_photo_sets = prune_child_dirs(config.test_photo_root, config.max_photo_sets_keep, current_scene)
+    if deleted_scenes or deleted_photo_sets:
+        print(
+            "🧹 历史资产清理完成: "
+            f"场景目录 {deleted_scenes} 个, 测试照片集 {deleted_photo_sets} 个"
+        )
 
 
 def build_ns_train_command(config: PipelineConfig, data_dir: Optional[Path] = None) -> List[str]:
@@ -565,6 +608,7 @@ def run_pipeline_once(config: PipelineConfig) -> None:
         npy_name=scene_name,
     )
     mark_latest_scene(config.scene_data_root, scene_name)
+    prune_old_assets(config, scene_name)
 
     print(f"✅ 训练数据已就绪: {scene_target_dir}")
     stale_pids = terminate_conflicting_ns_train(config.viewer_port, keep_data_dir=scene_target_dir)

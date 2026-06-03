@@ -1,13 +1,14 @@
 // utils/oss_upload_utils.js
 // 后端接口按 6006/6008 双端口设计
-// 6006：上传入口与 Viewer（分阶段复用）
-// 6008：管理 UI、状态接口与下载接口
+// 6006：Viewer
+// 6008：管理 UI、状态接口、下载接口与 /upload-proxy 上传代理
 
 // 端口映射说明：
-// 后端 6006 -> 前端访问 https://u342234-nrj1-e55849b5.bjb2.seetacloud.com:8443
-// 后端 6008 -> 前端访问 https://uu342234-nrj1-e55849b5.bjb2.seetacloud.com:8443
-const UPLOAD_BASE_URL = "https://u342234-nrj1-e55849b5.bjb2.seetacloud.com:8443";
-const DASHBOARD_BASE_URL = "https://uu342234-nrj1-e55849b5.bjb2.seetacloud.com:8443";
+// 后端 6006 -> 前端访问 https://u342234-z010-6c5b5490.bjb2.seetacloud.com:8443
+// 后端 6008 -> 前端访问 https://uu342234-z010-6c5b5490.bjb2.seetacloud.com:8443
+const DASHBOARD_BASE_URL = "https://uu342234-z010-6c5b5490.bjb2.seetacloud.com:8443";
+const VIEWER_BASE_URL = "https://u342234-z010-6c5b5490.bjb2.seetacloud.com:8443";
+const UPLOAD_PROXY_BASE_URL = `${DASHBOARD_BASE_URL}/upload-proxy`;
 const UPLOAD_TIMEOUT_MS = 20000;
 const MAX_UPLOAD_RETRY = 1;
 
@@ -16,12 +17,12 @@ const UPLOAD_AUTH_TOKEN = "";
 // 可选：如后端开启管理接口鉴权，请在此填 token（用于 dashboard 的 POST 接口）。
 const DASHBOARD_AUTH_TOKEN = "";
 
-const UPLOAD_API = `${UPLOAD_BASE_URL}/upload`;
+const UPLOAD_API = `${UPLOAD_PROXY_BASE_URL}/upload`;
 
 const BACKEND_LINKS = {
   uploadApi: UPLOAD_API,
-  uploadStatsUrl: `${UPLOAD_BASE_URL}/stats`,
-  viewerUrl: `${UPLOAD_BASE_URL}/`,
+  uploadStatsUrl: `${UPLOAD_PROXY_BASE_URL}/stats`,
+  viewerUrl: `${VIEWER_BASE_URL}/`,
   dashboardUrl: `${DASHBOARD_BASE_URL}/`,
   dashboardHealthUrl: `${DASHBOARD_BASE_URL}/healthz`,
   statusApiUrl: `${DASHBOARD_BASE_URL}/api/status`,
@@ -35,10 +36,13 @@ const BACKEND_LINKS = {
   pipelineStartApiUrl: `${DASHBOARD_BASE_URL}/api/pipeline/start`,
   pipelineStopApiUrl: `${DASHBOARD_BASE_URL}/api/pipeline/stop`,
   pointcloudsClearApiUrl: `${DASHBOARD_BASE_URL}/api/pointclouds/clear`,
+  pointcloudsSummaryApiUrl: `${DASHBOARD_BASE_URL}/api/pointclouds/summary`,
   gaussianExportLatestApiUrl: `${DASHBOARD_BASE_URL}/api/gaussian/export_latest`,
   downloadsUrl: `${DASHBOARD_BASE_URL}/downloads`,
   filesApiUrl: `${DASHBOARD_BASE_URL}/files`,
-  latestPointCloudUrl: `${DASHBOARD_BASE_URL}/download/latest?prefer=gaussian`
+  latestPointCloudUrl: `${DASHBOARD_BASE_URL}/download/latest?prefer=gaussian&processed=false`,
+  optimizedLatestPointCloudUrl: `${DASHBOARD_BASE_URL}/download/processed/latest?prefer=gaussian`,
+  gaussianZipUrl: `${DASHBOARD_BASE_URL}/download/zip?variant=gaussian`
 };
 
 function parseUploadResult(res) {
@@ -95,6 +99,10 @@ function parseUploadResult(res) {
   };
 }
 
+function buildUploadSessionId() {
+  return "wx_" + Date.now() + "_" + Math.random().toString(16).slice(2, 10);
+}
+
 function uploadFramesToBackend(frameList, progressCallback, resultCallback) {
   if (!Array.isArray(frameList) || frameList.length === 0) {
     if (typeof resultCallback === "function") {
@@ -105,6 +113,7 @@ function uploadFramesToBackend(frameList, progressCallback, resultCallback) {
 
   const onProgress = typeof progressCallback === "function" ? progressCallback : function() {};
   const onResult = typeof resultCallback === "function" ? resultCallback : function() {};
+  const sessionId = buildUploadSessionId();
 
   const checkFrameFile = function(frame) {
     return new Promise(function(resolve) {
@@ -164,10 +173,16 @@ function uploadFramesToBackend(frameList, progressCallback, resultCallback) {
     });
   };
 
-  const uploadSingleFrame = function(frame) {
+  const uploadSingleFrame = function(frame, frameIndex) {
     return new Promise(function(resolve) {
       var header = {};
-      var formData = {};
+      var formData = {
+        session_id: sessionId,
+        frame_index: String(frameIndex),
+        blur_score: frame && frame.blurScore !== undefined ? String(frame.blurScore) : "",
+        imu_stable: frame && frame.imuStable !== undefined ? String(Boolean(frame.imuStable)) : "",
+        captured_at: frame && frame.ts ? String(frame.ts) : ""
+      };
       if (UPLOAD_AUTH_TOKEN) {
         header["X-Auth-Token"] = UPLOAD_AUTH_TOKEN;
         formData.token = UPLOAD_AUTH_TOKEN;
@@ -278,7 +293,7 @@ function uploadFramesToBackend(frameList, progressCallback, resultCallback) {
     const total = uploadQueue.length;
     let current = 0;
     for (const frame of uploadQueue) {
-      const uploadResult = await uploadSingleFrame(frame);
+      const uploadResult = await uploadSingleFrame(frame, current);
       if (!uploadResult.ok) {
         var detail = uploadResult.message ? "：" + uploadResult.message : "";
         onResult(false, "第" + (current + 1) + "帧上传失败" + detail);
@@ -288,10 +303,10 @@ function uploadFramesToBackend(frameList, progressCallback, resultCallback) {
       onProgress(current, total);
     }
     if (skippedCount > 0) {
-      onResult(true, "上传成功" + total + "帧，跳过无效帧" + skippedCount + "张");
+      onResult(true, "上传成功" + total + "帧，跳过无效帧" + skippedCount + "张，批次 " + sessionId);
       return;
     }
-    onResult(true, "全部" + total + "帧上传成功");
+    onResult(true, "全部" + total + "帧上传成功，批次 " + sessionId);
   };
 
   uploadAllFrames().catch(function(err) {
@@ -302,5 +317,6 @@ function uploadFramesToBackend(frameList, progressCallback, resultCallback) {
 module.exports = {
   uploadFramesToBackend: uploadFramesToBackend,
   BACKEND_LINKS: BACKEND_LINKS,
-  DASHBOARD_AUTH_TOKEN: DASHBOARD_AUTH_TOKEN
+  DASHBOARD_AUTH_TOKEN: DASHBOARD_AUTH_TOKEN,
+  buildUploadSessionId: buildUploadSessionId
 };
