@@ -1,0 +1,5 @@
+﻿method,status,evidence,elapsed_sec,score
+Spann3R + Splatfacto,闭环完成,66 张输入；Spann3R 11.95 FPS；Splatfacto 60 步；Viewer 预览；Gaussian 导出,82.7,4
+NeRF / Nerfacto,局部可跑,20 步约 16s；缺少同等几何先验与 3DGS 下载闭环,16.0,2
+COLMAP + 3DGS,初始化受阻,ns-process-data 在非标定移动端输入上未稳定完成 COLMAP,5.0,1
+DUSt3R + 3DGS,环境未闭环,DUSt3R demo 依赖 gradio/huggingface 组件，未形成训练和下载闭环,3.0,1

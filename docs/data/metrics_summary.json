@@ -1,0 +1,156 @@
+{
+  "scene": "scene_20260603_220253_276bc298",
+  "video": {
+    "source": "C:/Users/wfy/Desktop/VID_20260603210401718.mp4",
+    "duration_sec": 22.082177,
+    "resolution": "1080x1920",
+    "extracted_frames": 66,
+    "upload_elapsed_sec": 46.974
+  },
+  "spann3r": {
+    "keyframes": 11,
+    "fps": 11.95,
+    "estimated_inference_sec": 0.9205020920502093,
+    "raw_points": 22105,
+    "downsampled_points": 864,
+    "keep_ratio": 0.0391
+  },
+  "splatfacto": {
+    "iterations": 60,
+    "train_elapsed_sec_from_file_times": 14.0,
+    "train_rows": [
+      {
+        "step": 10,
+        "percent": 16.67,
+        "iter_time": "584.583 ms 29",
+        "train_rays_m_per_sec": 134.26
+      },
+      {
+        "step": 20,
+        "percent": 33.33,
+        "iter_time": "7.656 ms 306.250",
+        "train_rays_m_per_sec": 126.81
+      },
+      {
+        "step": 30,
+        "percent": 50.0,
+        "iter_time": "8.069 ms 242.071",
+        "train_rays_m_per_sec": 117.25
+      },
+      {
+        "step": 40,
+        "percent": 66.67,
+        "iter_time": "8.190 ms 163.792",
+        "train_rays_m_per_sec": 114.61
+      },
+      {
+        "step": 50,
+        "percent": 83.33,
+        "iter_time": "8.173 ms 81.732",
+        "train_rays_m_per_sec": 116.25
+      }
+    ],
+    "viewer_url": "https://u342234-a85f-8b002f1b.bjb1.seetacloud.com:8443/"
+  },
+  "download": {
+    "gaussian_export_elapsed_sec": 15.0,
+    "gaussian_splat_bytes": 215862,
+    "downloads_url": "https://uu342234-a85f-8b002f1b.bjb1.seetacloud.com:8443/downloads"
+  },
+  "pipeline_timeline": [
+    {
+      "stage": "视频准备",
+      "start_sec": 0.0,
+      "duration_sec": 0.8,
+      "end_sec": 0.8
+    },
+    {
+      "stage": "抽帧/上传 66 张",
+      "start_sec": 0.8,
+      "duration_sec": 46.974,
+      "end_sec": 47.774
+    },
+    {
+      "stage": "任务排队与启动",
+      "start_sec": 47.774,
+      "duration_sec": 4.0,
+      "end_sec": 51.774
+    },
+    {
+      "stage": "Spann3R 重建 11 关键帧",
+      "start_sec": 51.774,
+      "duration_sec": 0.921,
+      "end_sec": 52.695
+    },
+    {
+      "stage": "数据格式转换",
+      "start_sec": 52.695,
+      "duration_sec": 1.0,
+      "end_sec": 53.695
+    },
+    {
+      "stage": "Splatfacto 训练 60 步",
+      "start_sec": 53.695,
+      "duration_sec": 14.0,
+      "end_sec": 67.695
+    },
+    {
+      "stage": "Gaussian 导出",
+      "start_sec": 67.695,
+      "duration_sec": 15.0,
+      "end_sec": 82.695
+    }
+  ],
+  "method_comparison": [
+    {
+      "method": "Spann3R + Splatfacto",
+      "status": "闭环完成",
+      "evidence": "66 张输入；Spann3R 11.95 FPS；Splatfacto 60 步；Viewer 预览；Gaussian 导出",
+      "elapsed_sec": 82.7,
+      "score": 4
+    },
+    {
+      "method": "NeRF / Nerfacto",
+      "status": "局部可跑",
+      "evidence": "20 步约 16s；缺少同等几何先验与 3DGS 下载闭环",
+      "elapsed_sec": 16.0,
+      "score": 2
+    },
+    {
+      "method": "COLMAP + 3DGS",
+      "status": "初始化受阻",
+      "evidence": "ns-process-data 在非标定移动端输入上未稳定完成 COLMAP",
+      "elapsed_sec": 5.0,
+      "score": 1
+    },
+    {
+      "method": "DUSt3R + 3DGS",
+      "status": "环境未闭环",
+      "evidence": "DUSt3R demo 依赖 gradio/huggingface 组件，未形成训练和下载闭环",
+      "elapsed_sec": 3.0,
+      "score": 1
+    }
+  ],
+  "artifact_sizes": [
+    {
+      "artifact": "Spann3R raw",
+      "size_bytes": 597043,
+      "size_kb": 583.0498046875
+    },
+    {
+      "artifact": "Spann3R downsampled",
+      "size_bytes": 23534,
+      "size_kb": 22.982421875
+    },
+    {
+      "artifact": "Gaussian splat",
+      "size_bytes": 215862,
+      "size_kb": 210.802734375
+    }
+  ],
+  "notes": [
+    "同卡对比以当前实例和已完成闭环为准，重点证明本项目路线的端到端可用性。",
+    "Viewer 实际 WebGL 渲染 FPS 未可靠采集，报告不伪造该指标。",
+    "下载优化以 Gaussian 和下采样点云为主，避免直接交付完整噪声点云。"
+  ]
+}
