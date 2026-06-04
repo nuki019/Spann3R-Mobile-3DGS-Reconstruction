@@ -1,0 +1,240 @@
+﻿\documentclass[12pt]{article}
+\usepackage[a4paper,margin=2.25cm]{geometry}
+\usepackage{fontspec}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+
+\setmainfont[
+  BoldFont=SimHei,
+  ItalicFont=SimSun,
+  BoldItalicFont=SimHei,
+  AutoFakeBold=2.2
+]{SimSun}
+\newfontfamily\heiti{SimHei}
+\XeTeXlinebreaklocale "zh"
+\XeTeXlinebreakskip = 0pt plus 1pt
+\emergencystretch=2em
+\hypersetup{colorlinks=true,linkcolor=blue,urlcolor=blue}
+
+\graphicspath{{../charts_cn/}{../screenshots/}{../video_frames_3fps/}}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0.16em}
+\setlength{\headheight}{15pt}
+\linespread{1.14}
+\renewcommand{\arraystretch}{1.18}
+\setlist[itemize]{leftmargin=2.6em,itemsep=0.12em,topsep=0.2em}
+\captionsetup{font=small}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{Spann3R + Splatfacto 移动端 3D 重建系统}
+\rhead{结题报告草案}
+\cfoot{\thepage}
+
+\newcommand{\placeholderfig}[2]{
+\begin{figure}[H]
+\centering
+\fbox{\begin{minipage}[c][#2][c]{0.86\textwidth}
+\centering
+\heiti #1\\[0.5em]
+\normalfont 该位置用于插入最终答辩截图或真机截图
+\end{minipage}}
+\caption{#1（待补充截图）}
+\end{figure}
+}
+
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{2.4cm}
+{\heiti\fontsize{22pt}{28pt}\selectfont 基于 Spann3R + Splatfacto 的移动端 3D 场景重建系统\\[0.35em]结题报告草案\par}
+\vspace{1.0cm}
+{\large 从手机采集到 Gaussian 预览与点云下载的端到端验证\par}
+\vspace{1.6cm}
+\begin{tabular}{rl}
+项目架构：& 移动端双筛关键帧采集 + Spann3R 先验重建 + Splatfacto / 3DGS 训练 \\
+测试数据：& 桌面视频抽帧 66 张，筛选为 11 个关键帧进入 Spann3R \\
+验证日期：& 2026 年 6 月 3 日 \\
+主要输出：& Viewer 在线预览、Gaussian splat 点云、下采样点云、对比图表与测试日志 \\
+\end{tabular}
+\vfill
+{\large 项目结题材料 / 可继续替换为学校封面模板\par}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+\section{摘要}
+本项目面向普通用户的移动端三维内容生产场景，构建了从小程序采集、关键帧筛选、云端重建训练、在线预览到点云下载的端云协同流程。系统采用 Spann3R + Splatfacto 的组合架构：前端通过 IMU 稳定性与图像清晰度进行双重关键帧筛选，减少抖动和模糊输入；后端使用 Spann3R 从非标定移动端图像中恢复相机先验和初始点云，再将结果转换为 Nerfstudio 数据格式并进入 Splatfacto / 3D Gaussian Splatting 训练。
+
+本轮结题测试使用桌面视频抽取的 66 张图像作为接近移动端采集的视频输入，系统筛选出 11 个关键帧用于 Spann3R 重建。Spann3R 阶段记录推理速度 11.95 FPS，原始点云 22105 个点，下采样后 864 个点，保留率 3.91\%。Splatfacto 进行 60 步训练后完成 Viewer 预览与 Gaussian splat 导出，导出文件大小约 210.8 KB。与 COLMAP + 3DGS、DUSt3R + 3DGS、NeRF / Nerfacto 的同卡对比表明，本项目方案在当前环境下是唯一完成“采集输入、几何先验、3DGS 训练、在线预览、结果下载”闭环的流程。
+
+\section{项目目标与系统边界}
+\subsection{目标}
+本项目的目标不是单独复现某个研究算法，而是把移动端采集和云端 3D 重建整合为可演示、可复核、可交付的系统。结题阶段重点验证四个能力：
+
+\begin{itemize}
+\item \textbf{上传可用性：}移动端或视频抽帧数据能够进入后端任务队列，训练前输入数量可追踪。
+\item \textbf{训练可用性：}非标定图像能够通过 Spann3R 获得相机与点云先验，并被 Splatfacto 继续训练。
+\item \textbf{预览可用性：}训练过程和结果能够在 Nerfstudio Viewer 中打开并进行交互观察。
+\item \textbf{下载可用性：}结果页面能够区分 raw、downsampled、train、gaussian 等文件类型，并支持单文件或筛选下载。
+\end{itemize}
+
+\subsection{本报告取舍}
+按照结题展示需要，本文围绕算法路线、训练证据、在线预览和结果下载组织材料。正文不展开部署细节，把重点放在“输入质量控制、非标定重建、3DGS 训练、可视化验证、轻量化交付”这条主线上。
+
+\section{总体技术路线}
+系统采用“移动端输入质量控制 + Spann3R 非标定重建 + Splatfacto 高斯训练 + Viewer/点云交付”的路线。其核心原因是：手机图像往往缺少稳定外参和规范采集轨迹，直接使用传统 COLMAP 或直接进入 3DGS 训练，容易受到模糊、抖动、遮挡和重复帧影响；Spann3R 能够先从图像序列中提供相机和点云先验，再交给 Splatfacto 优化高斯表达，从而把研究算法变成更接近产品流程的端到端系统。
+
+\begin{figure}[H]
+\centering
+\fbox{\begin{minipage}[c][4.0cm][c]{0.92\textwidth}
+\centering
+\heiti 移动端/视频帧输入 \quad $\rightarrow$ \quad IMU 稳定性筛选 + 清晰度筛选 \quad $\rightarrow$ \quad Spann3R 位姿与初始点云\\[0.65em]
+$\rightarrow$ \quad 点云下采样/裁切 \quad $\rightarrow$ \quad Nerfstudio transforms \quad $\rightarrow$ \quad Splatfacto 训练 \quad $\rightarrow$ \quad Viewer 预览 + 点云下载
+\end{minipage}}
+\caption{系统端到端算法流程}
+\end{figure}
+
+\section{移动端采集与首页优化}
+前端首页已从联调面板调整为正式采集工具界面。原页面常驻显示 IMU 方差、Acc/Gyro、阶段说明和调试文本，信息密度高但对普通用户不友好。优化后首页保留相机全屏画面，只在顶部显示三类核心状态：“稳定/请持稳”“双筛关键帧采集”“后端就绪/等待服务”；双重筛选以“稳定性筛选”和“清晰度筛选”两个状态项表达；采集统计压缩为“有效帧 / 总帧”与“晃动 / 模糊”淘汰摘要。
+
+该调整没有改变拍照间隔、IMU 阈值、模糊阈值、上传门控和上传接口，主要解决首页看起来像调试面板的问题。个人微信小程序端仍保持原有外部跳转与复制方案，不使用 WebView。
+
+\placeholderfig{小程序首页采集页：顶部状态条与双重筛选状态}{4.8cm}
+\placeholderfig{小程序上传中/上传完成跳转预览页}{4.4cm}
+
+\section{端到端测试设计}
+本轮使用桌面视频作为接近移动端真实拍摄的连续输入源。原视频为 1080x1920、30 FPS、约 22.08 秒，抽帧后得到 66 张 720x1280 JPG 图像。该输入覆盖了前端“多帧上传”的主要压力点，也便于复现实验。
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{0.86\textwidth}{lX}
+\toprule
+项目 & 结果 \\
+\midrule
+输入视频 & 1080x1920，约 22.08 秒 \\
+抽帧结果 & 66 张 JPG，720x1280 \\
+上传耗时 & 约 46.97 秒 \\
+任务场景名 & scene\_20260603\_220253\_276bc298 \\
+核心输出 & Spann3R 点云、Nerfstudio transforms、Splatfacto checkpoint、Gaussian splat \\
+\bottomrule
+\end{tabularx}
+\caption{端到端测试输入与输出概况}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.94\textwidth]{pipeline_timeline_cn.png}
+\caption{端到端测试时间线}
+\end{figure}
+
+\section{算法与训练结果}
+\subsection{Spann3R 阶段}
+Spann3R 阶段从 66 张上传图像中按关键帧间隔采样出 11 个关键帧，用于恢复相机先验和点云。日志记录显示重建完成，推理速度为 11.95 FPS。点云处理结果为：原始点云 22105 个点，下采样后 864 个点，保留率 3.91\%。这说明系统没有把完整噪声点云直接交给后续训练与下载，而是形成了更轻量的中间表达。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.78\textwidth]{pointcloud_reduction_cn.png}
+\caption{Spann3R 点云下采样效果}
+\end{figure}
+
+\subsection{Splatfacto / 3DGS 阶段}
+Splatfacto 训练使用 Spann3R 转换后的 Nerfstudio 数据集，完成 60 步训练并生成 checkpoint。训练日志显示第 10、20、30、40、50 步的 Train Rays/s 分别为 134.26M、126.81M、117.25M、114.61M、116.25M。短迭代测试的意义不是追求最终视觉质量上限，而是证明转换、训练、Viewer 和导出链路能够稳定闭合。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\textwidth]{training_throughput_cn.png}
+\caption{训练吞吐与推理速度证据}
+\end{figure}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{cccc}
+\toprule
+训练步数 & 完成比例 & Train Rays/s & 说明 \\
+\midrule
+10 & 16.67\% & 134.26M & 初始阶段吞吐较高 \\
+20 & 33.33\% & 126.81M & 训练进入稳定段 \\
+30 & 50.00\% & 117.25M & 吞吐保持百 M 级 \\
+40 & 66.67\% & 114.61M & 继续稳定训练 \\
+50 & 83.33\% & 116.25M & 接近本轮测试终点 \\
+\bottomrule
+\end{tabular}
+\caption{Splatfacto 训练日志摘要}
+\end{table}
+
+\section{预览与下载交付}
+\subsection{在线预览}
+训练完成后，Nerfstudio Viewer 能够打开场景并保持连接。Viewer 截图显示相机轨迹和场景区域已加载，可用于答辩演示时展示“训练结果不是离线文件，而是可交互预览对象”。由于本轮没有可靠采集 WebGL 实际渲染 FPS，报告不伪造预览帧率，仅使用 Viewer 连接截图和训练日志作为可复核证据。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\textwidth]{viewer_preview.png}
+\caption{Nerfstudio Viewer 在线预览截图}
+\end{figure}
+
+\subsection{下载优化}
+下载页面已经能够列出最新 Gaussian、Spann3R 下采样点云、训练输入点云和原始点云。相比直接下载完整点云，本项目优先提供下采样和 Gaussian 结果：原始点云约 583.0 KB，下采样点云约 23.0 KB，Gaussian splat 约 210.8 KB。这样的交付形式更适合移动端和答辩演示：用户可以快速下载小体积中间结果，也可以下载最终 Gaussian 表达进行后续查看。
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.92\textwidth]{downloads_page.png}
+\caption{训练点云下载页面}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.82\textwidth]{download_artifact_sizes_cn.png}
+\caption{下载文件体积对比}
+\end{figure}
+
+\section{同卡工作流对比}
+本轮在同一张 GPU 环境中尝试对比几类常见路径。结论不是简单比较单项速度，而是比较“能否在当前工程条件下完成端到端交付”。
+
+\begin{table}[H]
+\centering
+\begin{tabularx}{0.96\textwidth}{lclX}
+\toprule
+工作流 & 状态 & 记录耗时 & 结论 \\
+\midrule
+Spann3R + Splatfacto & 完整闭环 & 约 82.7s & 66 帧输入、11 关键帧、Spann3R 重建、Splatfacto 训练、Viewer、Gaussian 下载均完成 \\
+NeRF / Nerfacto & 训练可跑 & 20 步约 16s & 可作为训练基线，但没有直接提供本项目所需的 3DGS 点云交付优势 \\
+COLMAP + 3DGS & 未形成闭环 & 约 5s 后失败 & 预处理阶段依赖 COLMAP，本轮环境缺少对应工具 \\
+DUSt3R + 3DGS & 未形成闭环 & 约 3s 后失败 & 独立 demo 依赖存在 gradio / huggingface 兼容问题 \\
+\bottomrule
+\end{tabularx}
+\caption{同卡工作流对比摘要}
+\end{table}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{workflow_viability_cn.png}
+\caption{同卡可交付性对比}
+\end{figure}
+
+对比结果体现了本项目架构的工程价值：传统 COLMAP + 3DGS 对外部几何工具依赖强；DUSt3R 独立 demo 在依赖环境上更容易与现有训练环境冲突；NeRF / Nerfacto 能跑训练，但更偏神经场渲染基线，不直接解决本项目的 Gaussian 结果交付目标。Spann3R + Splatfacto 则在本轮环境中完成了从非标定帧输入到 Gaussian 下载的完整链路。
+
+\section{结论}
+本项目结题阶段已经具备可演示闭环：前端采集首页从调试面板优化为正式采集工具；上传链路能够处理多帧输入；Spann3R 能够从移动端/视频帧中恢复关键帧几何先验；Splatfacto 能继续训练并打开 Viewer；下载页面能够交付 raw、downsampled、train 和 Gaussian 文件。整体架构的优势在于将非标定移动端输入、先验重建和 3DGS 训练衔接成可复核流程，而不是停留在单个算法脚本。
+
+后续答辩可重点展示三条证据线：第一，首页的双筛关键帧采集界面，说明输入质量控制；第二，训练时间线、吞吐曲线和 Viewer 截图，说明训练可跑且可预览；第三，下载页面和点云体积对比，说明结果可交付且下载方案经过优化。
+
+\section*{待补充截图清单}
+\begin{itemize}
+\item 小程序首页采集页真机或开发者工具截图：需要显示“稳定/请持稳”“双筛关键帧采集”“稳定性筛选/清晰度筛选”。
+\item 小程序采集中截图：需要显示有效帧 / 总帧、晃动 / 模糊淘汰摘要。
+\item 小程序上传完成后跳转预览页截图：用于证明前端上传体验闭环。
+\item Viewer 手动旋转到更清晰视角后的截图：当前截图已证明连接，但答辩最好补一张主体更明显的角度。
+\item 可选：下载页面筛选“最新 Gaussian”后的局部截图，用于突出最终成果下载。
+\end{itemize}
+
+\end{document}

@@ -1,1 +1,386 @@
-@frontend/pages/preview/preview.wxss
+.preview-wrap {
+  width: 100%;
+  min-height: 100vh;
+  background: linear-gradient(180deg, #091019 0%, #111d2c 60%, #1d2533 100%);
+  padding: 20rpx 0 40rpx;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.panel {
+  width: 92%;
+  margin: 0 auto 20rpx;
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 16rpx;
+  padding: 24rpx;
+  box-sizing: border-box;
+}
+
+.panel-title {
+  font-size: 30rpx;
+  font-weight: bold;
+  color: #8cc8ff;
+  margin-bottom: 10rpx;
+}
+
+.panel-desc {
+  font-size: 22rpx;
+  line-height: 1.5;
+  color: #e8eef7;
+  margin-bottom: 16rpx;
+}
+
+.refresh-btn {
+  width: 100%;
+  height: 70rpx;
+  line-height: 70rpx;
+  border: none;
+  border-radius: 12rpx;
+  font-size: 26rpx;
+  background-color: #1677ff;
+  color: #fff;
+  margin-bottom: 16rpx;
+}
+
+.phase-banner {
+  margin-bottom: 14rpx;
+  border-radius: 12rpx;
+  padding: 12rpx;
+  background-color: rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+
+.phase-title {
+  font-size: 24rpx;
+  color: #ffd666;
+  font-weight: 600;
+}
+
+.phase-desc {
+  font-size: 22rpx;
+  color: #e6f4ff;
+  line-height: 1.4;
+}
+
+.phase-flags {
+  font-size: 20rpx;
+  color: #b7eb8f;
+}
+
+.status-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+}
+
+.status-item {
+  background-color: rgba(0, 0, 0, 0.3);
+  border-radius: 10rpx;
+  padding: 12rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+
+.status-label {
+  font-size: 22rpx;
+  color: #b9c7d9;
+}
+
+.status-value {
+  font-size: 24rpx;
+  color: #fff;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.action-wrap {
+  margin-top: 14rpx;
+  background-color: rgba(0, 0, 0, 0.35);
+  border-radius: 12rpx;
+  padding: 14rpx;
+}
+
+.action-title {
+  font-size: 24rpx;
+  color: #d6e4ff;
+  margin-bottom: 10rpx;
+}
+
+.token-input {
+  width: 100%;
+  height: 68rpx;
+  border-radius: 10rpx;
+  background-color: rgba(255, 255, 255, 0.08);
+  border: 1rpx solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  font-size: 24rpx;
+  padding: 0 16rpx;
+  box-sizing: border-box;
+  margin-bottom: 12rpx;
+}
+
+.action-row {
+  display: flex;
+  gap: 10rpx;
+}
+
+.action-btn {
+  flex: 1;
+  height: 66rpx;
+  line-height: 66rpx;
+  border: none;
+  border-radius: 10rpx;
+  font-size: 24rpx;
+  margin: 0;
+  color: #fff;
+}
+
+.action-start {
+  background-color: #237804;
+}
+
+.action-stop {
+  background-color: #a8071a;
+}
+
+.action-export {
+  background-color: #096dd9;
+}
+
+.action-tip {
+  margin-top: 10rpx;
+  color: #e6f4ff;
+  font-size: 22rpx;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.updated-at {
+  margin-top: 12rpx;
+  font-size: 22rpx;
+  color: #d7e0ee;
+}
+
+.error-tip {
+  margin-top: 8rpx;
+  background-color: rgba(245, 34, 45, 0.2);
+  color: #ffccc7;
+  font-size: 22rpx;
+  border-radius: 8rpx;
+  padding: 10rpx;
+}
+
+.frame-swiper {
+  width: 100%;
+  height: 44vh;
+  background-color: #1a1a1a;
+  border-radius: 14rpx;
+  overflow: hidden;
+}
+
+.frame-swiper .wx-swiper-item,
+.frame-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.frame-image {
+  flex: 1;
+  width: 100%;
+  background-color: #2a2a2a;
+}
+
+.frame-info {
+  min-height: 80rpx;
+  line-height: 1.4;
+  text-align: center;
+  color: #fff;
+  font-size: 22rpx;
+  background-color: rgba(0, 0, 0, 0.6);
+  padding: 10rpx 16rpx;
+  box-sizing: border-box;
+}
+
+.empty-tip {
+  width: 100%;
+  color: #ffec99;
+  font-size: 24rpx;
+  text-align: center;
+  padding: 40rpx 20rpx;
+  background-color: rgba(0, 0, 0, 0.25);
+  border-radius: 12rpx;
+  box-sizing: border-box;
+}
+
+.pointcloud-summary {
+  background-color: rgba(0, 0, 0, 0.35);
+  border-radius: 12rpx;
+  color: #e6f4ff;
+  font-size: 23rpx;
+  line-height: 1.45;
+  padding: 14rpx;
+  margin-bottom: 14rpx;
+  word-break: break-all;
+}
+
+.download-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12rpx;
+  margin-bottom: 14rpx;
+}
+
+.download-actions .copy-btn {
+  height: 64rpx;
+  line-height: 64rpx;
+  border-radius: 12rpx;
+  font-size: 22rpx;
+}
+
+.copy-main {
+  background-color: #1677ff;
+}
+
+.copy-secondary {
+  background-color: #31445f;
+}
+
+.pointcloud-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+}
+
+.pointcloud-item {
+  background-color: rgba(0, 0, 0, 0.32);
+  border-radius: 12rpx;
+  padding: 14rpx;
+}
+
+.pointcloud-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10rpx;
+  margin-bottom: 8rpx;
+}
+
+.pointcloud-name {
+  flex: 1;
+  color: #fff;
+  font-size: 24rpx;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.pointcloud-badge {
+  flex-shrink: 0;
+  border-radius: 999rpx;
+  background-color: rgba(255, 255, 255, 0.14);
+  color: #d6e4ff;
+  font-size: 20rpx;
+  padding: 4rpx 12rpx;
+}
+
+.badge-gaussian {
+  background-color: rgba(82, 196, 26, 0.22);
+  color: #b7eb8f;
+}
+
+.pointcloud-meta,
+.pointcloud-path {
+  color: #c9d6e6;
+  font-size: 21rpx;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.pointcloud-path {
+  color: #94a9c2;
+  margin-top: 4rpx;
+}
+
+.pointcloud-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10rpx;
+  margin-top: 12rpx;
+}
+
+.mini-copy-btn {
+  height: 56rpx;
+  line-height: 56rpx;
+  border-radius: 10rpx;
+  border: none;
+  margin: 0;
+  background-color: #1677ff;
+  color: #fff;
+  font-size: 21rpx;
+}
+
+.link-block {
+  background-color: rgba(0, 0, 0, 0.35);
+  border-radius: 12rpx;
+  padding: 14rpx;
+  margin-bottom: 14rpx;
+}
+
+.link-label {
+  font-size: 24rpx;
+  color: #fff;
+  margin-bottom: 10rpx;
+}
+
+.url-box {
+  width: 100%;
+  background-color: #111;
+  border-radius: 8rpx;
+  padding: 12rpx;
+  margin-bottom: 12rpx;
+  box-sizing: border-box;
+  overflow-x: auto;
+}
+
+.url-text {
+  font-size: 20rpx;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.copy-btn,
+.back-btn {
+  width: 100%;
+  height: 70rpx;
+  line-height: 70rpx;
+  border-radius: 35rpx;
+  font-size: 26rpx;
+  border: none;
+  margin: 0;
+}
+
+.copy-btn {
+  background-color: #1677ff;
+  color: #fff;
+}
+
+.copy-state {
+  margin: 8rpx 0 20rpx;
+  padding: 10rpx 20rpx;
+  border-radius: 10rpx;
+  font-size: 24rpx;
+  color: #fff;
+  background-color: rgba(22, 119, 255, 0.75);
+}
+
+.back-btn {
+  width: 92%;
+  background-color: #ff4d4f;
+  color: #fff;
+}

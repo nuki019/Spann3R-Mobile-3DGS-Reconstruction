@@ -1,1 +1,5 @@
-@frontend/pages/preview/preview.json
+{
+  "navigationBarTitleText": "后端状态与浏览引导",
+  "navigationBarBackgroundColor": "#000",
+  "navigationBarTextStyle": "white"
+}

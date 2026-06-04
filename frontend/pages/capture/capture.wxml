@@ -1,1 +1,83 @@
-@frontend/pages/capture/capture.wxml
+<view class="auth-wrap" wx:if="{{!hasCameraAuth}}">
+  <view class="auth-card">
+    <view class="auth-title">3D 场景采集</view>
+    <view class="auth-desc">开启相机用于采集关键帧；相册权限用于保存筛选后的有效照片。</view>
+    <button class="auth-btn primary" bindtap="applyCameraAuth">开启相机</button>
+    <button class="auth-btn secondary" bindtap="applyAlbumAuth">允许保存照片</button>
+  </view>
+</view>
+
+<view class="capture-wrap" wx:else>
+  <view class="camera-wrap">
+    <camera
+      device-position="back"
+      resolution="720p"
+      style="width: 100%; height: 100%;"
+      binderror="onCameraError"
+      id="camera"
+    ></camera>
+  </view>
+
+  <view class="top-panel">
+    <view class="status-row">
+      <view class="status-pill {{isIMUStable ? 'ok' : 'warn'}}">
+        {{isIMUStable ? '稳定' : '请持稳'}}
+      </view>
+      <view class="status-title">双筛关键帧采集</view>
+      <view class="status-pill {{phaseAllowUpload ? 'ok' : 'idle'}}">
+        {{phaseAllowUpload ? '后端就绪' : '等待服务'}}
+      </view>
+    </view>
+
+    <view class="filter-row">
+      <view class="filter-item {{isIMUStable ? 'pass' : 'pending'}}">
+        <text class="filter-name">稳定性筛选</text>
+        <text class="filter-value">{{isIMUStable ? '通过' : '待通过'}}</text>
+      </view>
+      <view class="filter-item {{blurScore >= blurThreshold ? 'pass' : 'pending'}}">
+        <text class="filter-name">清晰度筛选</text>
+        <text class="filter-value">{{blurScore >= blurThreshold ? '通过' : '检测中'}}</text>
+      </view>
+    </view>
+
+    <view class="capture-counts">
+      <text>有效帧 {{validFrameCount}} / 总帧 {{frameCount}}</text>
+      <text wx:if="{{frameCount > 0}}" class="reject-summary">晃动 {{rejectedIMUCount}} · 模糊 {{rejectedBlurCount}}</text>
+    </view>
+  </view>
+
+  <view class="center-toast" wx:if="{{isUploading}}">
+    上传中 {{uploadProgress}}%
+  </view>
+  <view class="center-toast success" wx:if="{{uploadDone}}">
+    上传完成，正在进入状态页
+  </view>
+  <view class="center-toast error" wx:if="{{uploadError}}">
+    上传失败，请重试
+  </view>
+  <view class="album-toast" wx:if="{{saveToAlbumDone}}">
+    已保存 {{validFrameCount}} 张有效帧
+  </view>
+
+  <view class="btn-wrap">
+    <button
+      class="btn-primary"
+      bindtap="toggleCapture"
+      disabled="{{isUploading}}"
+    >
+      <text wx:if="{{isCapturing}}">停止采集 · 有效 {{validFrameCount}}</text>
+      <text wx:else>开始采集</text>
+    </button>
+    <button
+      class="btn-upload"
+      bindtap="syncToBackend"
+      disabled="{{validFrameCount === 0 || isUploading || isCapturing || !phaseAllowUpload}}"
+    >
+      <text wx:if="{{isUploading}}">{{uploadProgress}}%</text>
+      <text wx:elif="{{isCapturing}}">采集中</text>
+      <text wx:elif="{{validFrameCount === 0}}">无有效帧</text>
+      <text wx:elif="{{!phaseAllowUpload}}">等待服务</text>
+      <text wx:else>上传</text>
+    </button>
+  </view>
+</view>
