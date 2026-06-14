@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 PYTHON_FILES = [
     ROOT / "backend" / "services" / "backend_dashboard.py",
+    ROOT / "backend" / "services" / "asset_inventory.py",
     ROOT / "backend" / "services" / "config_model.py",
     ROOT / "backend" / "services" / "dashboard_state_model.py",
     ROOT / "backend" / "services" / "pointcloud_download_server.py",
@@ -32,6 +33,7 @@ PYTHON_FILES = [
     ROOT / "tools" / "smoke_check_delivery.py",
     ROOT / "tools" / "api_contract_check.py",
     ROOT / "tools" / "autodl_preflight_check.py",
+    ROOT / "tools" / "test_asset_inventory.py",
     ROOT / "tools" / "test_frontend_config.py",
     ROOT / "tools" / "test_config_model.py",
     ROOT / "tools" / "test_dashboard_state_model.py",
@@ -128,6 +130,7 @@ def check_required_text() -> None:
         "smoke_check_delivery.py",
         "api_contract_check.py",
         "autodl_preflight_check.py",
+        "test_asset_inventory.py",
         "test_frontend_config.py",
         "test_config_model.py",
         "test_dashboard_state_model.py",
@@ -248,6 +251,19 @@ def check_api_contract_script() -> None:
     )
     if result.returncode != 0:
         fail(f"api contract check failed\n{result.stdout}\n{result.stderr}")
+    print(result.stdout.rstrip())
+
+
+def check_asset_inventory_tests() -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "test_asset_inventory.py")],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        fail(f"asset inventory tests failed\n{result.stdout}\n{result.stderr}")
     print(result.stdout.rstrip())
 
 
@@ -443,6 +459,7 @@ def main() -> None:
     check_frontend_queue_entrypoints()
     check_frontend_capture_copy()
     check_api_contract_script()
+    check_asset_inventory_tests()
     check_frontend_config_tests()
     check_config_model_tests()
     check_dashboard_state_model_tests()

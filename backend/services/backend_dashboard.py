@@ -43,6 +43,14 @@ from services.config_model import (
     write_config_file,
 )
 from services.dashboard_state_model import active_job_from_state, merge_state_progress, normalize_state_phase
+from services.asset_inventory import (
+    discover_archive_dirs as discover_archive_dirs_for_root,
+    discover_photo_scenes as discover_photo_scenes_for_root,
+    discover_scene_datasets as discover_scene_datasets_for_root,
+    discover_uploaded_images as discover_uploaded_images_for_root,
+    list_images,
+    read_latest_scene as read_latest_scene_for_root,
+)
 from services.progress_model import build_phase_status, extract_current_run_logs, parse_progress
 from services.upload_model import (
     build_upload_filename,
@@ -50,7 +58,6 @@ from services.upload_model import (
     validate_upload_suffix,
 )
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
 UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -248,14 +255,6 @@ def tail_lines(path: Path, max_lines: int = 300) -> List[str]:
     return lines[-max_lines:]
 
 
-def list_images(directory: Path) -> List[Path]:
-    if not directory.exists():
-        return []
-    files = [item for item in directory.iterdir() if item.is_file() and item.suffix in IMAGE_EXTENSIONS]
-    files.sort(key=lambda item: item.stat().st_mtime_ns, reverse=True)
-    return files
-
-
 def get_config_path(config_key: str, fallback: Path) -> Path:
     return get_config_path_from_values(read_env_file(), config_key, fallback)
 
@@ -317,18 +316,7 @@ def find_scene_gaussian_files(scene_name: str) -> Dict[str, str]:
 
 def discover_uploaded_images(limit: int = 200) -> List[Dict[str, str]]:
     watch_dir = get_config_path("WATCH_DIR", WATCH_DIR)
-    payload: List[Dict[str, str]] = []
-    for image_path in list_images(watch_dir)[:limit]:
-        stat = image_path.stat()
-        payload.append(
-            {
-                "name": image_path.name,
-                "size_bytes": str(stat.st_size),
-                "mtime": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
-                "path": str(image_path),
-            }
-        )
-    return payload
+    return discover_uploaded_images_for_root(watch_dir, limit=limit)
 
 
 def discover_upload_archives(limit: int = 20) -> List[Dict[str, str]]:
@@ -342,81 +330,22 @@ def discover_queue_archives(limit: int = 20) -> List[Dict[str, str]]:
 
 
 def discover_archive_dirs(archive_root: Path, limit: int = 20) -> List[Dict[str, str]]:
-    if not archive_root.exists():
-        return []
-    candidates = [item for item in archive_root.iterdir() if item.is_dir()]
-    candidates.sort(key=lambda item: item.stat().st_mtime_ns, reverse=True)
-
-    payload: List[Dict[str, str]] = []
-    for archive_dir in candidates[:limit]:
-        files = [item for item in archive_dir.rglob("*") if item.is_file()]
-        image_count = len([item for item in files if item.suffix in IMAGE_EXTENSIONS])
-        total_size = sum(item.stat().st_size for item in files)
-        payload.append(
-            {
-                "name": archive_dir.name,
-                "path": str(archive_dir),
-                "image_count": str(image_count),
-                "file_count": str(len(files)),
-                "size_bytes": str(total_size),
-                "mtime": datetime.fromtimestamp(archive_dir.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
-            }
-        )
-    return payload
+    return discover_archive_dirs_for_root(archive_root, limit=limit)
 
 
 def discover_photo_scenes(limit: int = 200) -> List[Dict[str, str]]:
     test_photo_root = get_config_path("TEST_PHOTO_ROOT", TEST_PHOTO_ROOT)
-    if not test_photo_root.exists():
-        return []
-    candidates = [item for item in test_photo_root.iterdir() if item.is_dir()]
-    candidates.sort(key=lambda item: item.stat().st_mtime_ns, reverse=True)
-
-    payload: List[Dict[str, str]] = []
-    for scene_dir in candidates[:limit]:
-        image_count = len([item for item in scene_dir.iterdir() if item.is_file() and item.suffix in IMAGE_EXTENSIONS])
-        payload.append(
-            {
-                "scene": scene_dir.name,
-                "image_count": str(image_count),
-                "path": str(scene_dir),
-                "mtime": datetime.fromtimestamp(scene_dir.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
-            }
-        )
-    return payload
+    return discover_photo_scenes_for_root(test_photo_root, limit=limit)
 
 
 def discover_scene_datasets(limit: int = 200) -> List[Dict[str, str]]:
     scene_data_root = get_config_path("SCENE_DATA_ROOT", SCENE_DATA_ROOT)
-    if not scene_data_root.exists():
-        return []
-    candidates = [item for item in scene_data_root.iterdir() if item.is_dir()]
-    candidates.sort(key=lambda item: item.stat().st_mtime_ns, reverse=True)
-
-    payload: List[Dict[str, str]] = []
-    for scene_dir in candidates[:limit]:
-        image_dir = scene_dir / "images"
-        image_count = len([item for item in image_dir.iterdir() if item.is_file() and item.suffix in IMAGE_EXTENSIONS]) if image_dir.exists() else 0
-        ply_files = list(scene_dir.glob("*.ply"))
-        payload.append(
-            {
-                "scene": scene_dir.name,
-                "image_count": str(image_count),
-                "pointcloud_count": str(len(ply_files)),
-                "has_transforms": str((scene_dir / "transforms.json").exists()),
-                "path": str(scene_dir),
-                "mtime": datetime.fromtimestamp(scene_dir.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
-            }
-        )
-    return payload
+    return discover_scene_datasets_for_root(scene_data_root, limit=limit)
 
 
 def read_latest_scene() -> str:
     scene_data_root = get_config_path("SCENE_DATA_ROOT", SCENE_DATA_ROOT)
-    marker = scene_data_root / "LATEST_SCENE.txt"
-    if not marker.exists():
-        return ""
-    return marker.read_text(encoding="utf-8").strip()
+    return read_latest_scene_for_root(scene_data_root)
 
 
 def clear_uploaded_images() -> int:
