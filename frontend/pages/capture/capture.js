@@ -1,5 +1,6 @@
 const app = getApp();
 const { uploadFramesToBackend, BACKEND_LINKS } = require("../../utils/oss_upload_utils");
+const captureState = require("../../utils/capture_state_model");
 
 // IMU筛选配置
 var IMU_CONFIG = {
@@ -116,153 +117,39 @@ Page({
   },
 
   getPhaseFromProgress: function(progressData) {
-    var data = progressData || {};
-    var phase = "";
-    if (typeof data.phase === "string" && data.phase) {
-      phase = data.phase;
-    } else if (typeof data.stage === "string" && data.stage) {
-      phase = data.stage;
-    }
-    return phase || "unknown";
+    return captureState.getPhaseFromProgress(progressData);
   },
 
   getPhaseText: function(phase) {
-    var phaseMap = {
-      input: "input（可上传）",
-      spann3r: "spann3r（重建中）",
-      gaussian: "gaussian（训练/导出中）",
-      export: "export（点云导出中）",
-      completed: "completed（可查看/下载）",
-      stopped: "stopped（已停止）",
-      failed: "failed（失败）",
-      idle: "idle（空闲）",
-      unknown: "unknown（未知）"
-    };
-    return phaseMap[phase] || (phase + "（未知映射）");
+    return captureState.getPhaseText(phase);
   },
 
   getPhaseHint: function(phase, uploadHealthy, dashboardHealthy, uploadAllow, queueEnabled) {
-    if (this.isUploadAllowed(phase, uploadHealthy, dashboardHealthy, uploadAllow)) {
-      return queueEnabled ? "队列上传就绪，可继续提交新任务" : "上传服务就绪，可提交本批照片";
-    }
-    if (phase === "spann3r") {
-      return "Spann3R 重建处理中，上传已禁用";
-    }
-    if (phase === "gaussian" || phase === "export" || phase === "completed") {
-      return "当前为查看或导出阶段，上传暂不可用";
-    }
-    if (this.canUploadByPhase(phase) && dashboardHealthy && !uploadHealthy) {
-      return "状态服务已连通，但上传代理未就绪（检查 /upload-proxy/healthz）";
-    }
-    if (this.canUploadByPhase(phase) && !dashboardHealthy) {
-      return "健康检查未通过（请检查 uu 域名 /healthz）";
-    }
-    if (phase === "idle" || phase === "stopped") {
-      return "可在后端管理台启动流程；健康检查通过后可直接上传";
-    }
-    return "后端阶段未知，请检查 /api/progress 与 /healthz";
+    return captureState.getPhaseHint(phase, uploadHealthy, dashboardHealthy, uploadAllow, queueEnabled);
   },
 
   canUploadByPhase: function(phase) {
-    return phase === "idle" || phase === "input" || phase === "upload" || phase === "stopped" || phase === "unknown";
+    return captureState.canUploadByPhase(phase);
   },
 
   isUploadAllowed: function(phase, uploadHealthy, dashboardHealthy, uploadAllow) {
-    if (!uploadHealthy) {
-      return false;
-    }
-    if (typeof uploadAllow === "boolean") {
-      return uploadAllow;
-    }
-    return this.canUploadByPhase(phase);
+    return captureState.isUploadAllowed(phase, uploadHealthy, dashboardHealthy, uploadAllow);
   },
 
   getBackendStatusLabel: function(phase, uploadHealthy, dashboardHealthy, uploadAllow) {
-    if (this.isUploadAllowed(phase, uploadHealthy, dashboardHealthy, uploadAllow)) {
-      return "后端就绪";
-    }
-    if (!uploadHealthy && !dashboardHealthy) {
-      return "等待服务";
-    }
-    if (this.canUploadByPhase(phase) && !uploadHealthy) {
-      return "等待上传服务";
-    }
-    if (phase === "spann3r") {
-      return "重建中";
-    }
-    if (phase === "gaussian") {
-      return "训练中";
-    }
-    if (phase === "export") {
-      return "导出中";
-    }
-    if (phase === "completed") {
-      return "已完成";
-    }
-    if (phase === "failed") {
-      return "失败";
-    }
-    return "暂不可传";
+    return captureState.getBackendStatusLabel(phase, uploadHealthy, dashboardHealthy, uploadAllow);
   },
 
   getBackendStatusClass: function(phase, uploadHealthy, dashboardHealthy, uploadAllow) {
-    if (this.isUploadAllowed(phase, uploadHealthy, dashboardHealthy, uploadAllow)) {
-      return "ok";
-    }
-    if (!uploadHealthy && !dashboardHealthy) {
-      return "idle";
-    }
-    if (this.canUploadByPhase(phase) && !uploadHealthy) {
-      return "warn";
-    }
-    if (phase === "spann3r" || phase === "gaussian" || phase === "export" || phase === "failed") {
-      return "warn";
-    }
-    return "idle";
+    return captureState.getBackendStatusClass(phase, uploadHealthy, dashboardHealthy, uploadAllow);
   },
 
   getUploadBlockLabel: function(phase, uploadHealthy, dashboardHealthy) {
-    if (!uploadHealthy && !dashboardHealthy) {
-      return "等待服务";
-    }
-    if (this.canUploadByPhase(phase) && !uploadHealthy) {
-      return "等待上传服务";
-    }
-    if (phase === "spann3r") {
-      return "重建中";
-    }
-    if (phase === "gaussian") {
-      return "训练中";
-    }
-    if (phase === "export") {
-      return "导出中";
-    }
-    if (phase === "completed") {
-      return "已完成";
-    }
-    if (phase === "failed") {
-      return "失败";
-    }
-    return "暂不可传";
+    return captureState.getUploadBlockLabel(phase, uploadHealthy, dashboardHealthy);
   },
 
   applyPhaseState: function(phase, uploadHealthy, dashboardHealthy, uploadAllow, queueEnabled) {
-    var normalizedPhase = phase || "unknown";
-    var healthOk = Boolean(uploadHealthy);
-    var dashboardOk = Boolean(dashboardHealthy);
-    var allowUpload = this.isUploadAllowed(normalizedPhase, healthOk, dashboardOk, uploadAllow);
-    this.setData({
-      currentPhase: normalizedPhase,
-      phaseText: this.getPhaseText(normalizedPhase),
-      phaseAllowUpload: allowUpload,
-      backendStatusLabel: this.getBackendStatusLabel(normalizedPhase, healthOk, dashboardOk, uploadAllow),
-      backendStatusClass: this.getBackendStatusClass(normalizedPhase, healthOk, dashboardOk, uploadAllow),
-      uploadBlockLabel: this.getUploadBlockLabel(normalizedPhase, healthOk, dashboardOk),
-      uploadHealthOk: healthOk,
-      dashboardHealthOk: dashboardOk,
-      queueUploadEnabled: Boolean(queueEnabled),
-      phaseHint: this.getPhaseHint(normalizedPhase, healthOk, dashboardOk, uploadAllow, queueEnabled)
-    });
+    this.setData(captureState.buildPhaseState(phase, uploadHealthy, dashboardHealthy, uploadAllow, queueEnabled));
   },
 
   requestProgressPhase: function() {
