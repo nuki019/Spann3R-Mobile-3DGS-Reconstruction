@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from services.dashboard_state_model import (  # noqa: E402
     active_job_from_state,
+    build_dashboard_status_payload,
     merge_state_progress,
     normalize_state_phase,
 )
@@ -75,6 +76,32 @@ def test_active_job_from_state() -> None:
     print("[OK] dashboard state active job")
 
 
+def test_dashboard_status_payload() -> None:
+    payload = build_dashboard_status_payload(
+        pid=1234,
+        queue_enabled=True,
+        queue_summary={"count": 3, "queued": 2, "running": 1},
+        active_job={"id": "job_a"},
+    )
+    assert_true(payload["running"], "status should report running when pid exists")
+    assert_equal(payload["pid"], 1234, "status pid changed")
+    assert_true(payload["queue_enabled"], "status queue flag changed")
+    assert_equal(payload["queue_length"], 2, "status queue length changed")
+    assert_equal(payload["queue"], {"count": 3, "queued": 2, "running": 1}, "status queue summary changed")
+    assert_equal(payload["active_job"], {"id": "job_a"}, "status active job changed")
+
+    stopped = build_dashboard_status_payload(
+        pid=None,
+        queue_enabled=False,
+        queue_summary={"count": 0},
+        active_job=None,
+    )
+    assert_true(not stopped["running"], "status should not run without pid")
+    assert_equal(stopped["queue_length"], 0, "missing queued count should default to zero")
+    assert_equal(stopped["active_job"], None, "empty active job changed")
+    print("[OK] dashboard state status payload")
+
+
 def test_merge_state_progress() -> None:
     merged = merge_state_progress(
         {
@@ -118,6 +145,7 @@ def test_merge_state_progress() -> None:
 def main() -> None:
     test_phase_normalization()
     test_active_job_from_state()
+    test_dashboard_status_payload()
     test_merge_state_progress()
     print("[OK] dashboard state model checks passed")
 

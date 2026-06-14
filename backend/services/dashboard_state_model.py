@@ -32,6 +32,22 @@ def active_job_from_state(state: Dict[str, object], running: bool) -> Optional[D
     }
 
 
+def build_dashboard_status_payload(
+    pid: Optional[int],
+    queue_enabled: bool,
+    queue_summary: Dict[str, object],
+    active_job: Optional[Dict[str, object]],
+) -> Dict[str, object]:
+    return {
+        "running": bool(pid),
+        "pid": pid,
+        "queue_enabled": queue_enabled,
+        "queue_length": queue_summary.get("queued", 0),
+        "queue": queue_summary,
+        "active_job": active_job,
+    }
+
+
 def merge_state_progress(
     state: Dict[str, object],
     log_progress: Dict[str, Optional[str]],

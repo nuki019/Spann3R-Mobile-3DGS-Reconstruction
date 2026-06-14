@@ -45,7 +45,12 @@ from services.config_model import (
     write_config_file,
 )
 from services.cleanup_model import clear_non_running_jobs, clear_uploaded_inputs
-from services.dashboard_state_model import active_job_from_state, merge_state_progress, normalize_state_phase
+from services.dashboard_state_model import (
+    active_job_from_state,
+    build_dashboard_status_payload,
+    merge_state_progress,
+    normalize_state_phase,
+)
 from services.gaussian_export_model import apply_gaussian_export_config, latest_scene_dir
 from services.asset_inventory import (
     build_scenes_summary_payload,
@@ -1057,14 +1062,12 @@ async def api_status():
     queue_root = get_config_path("PIPELINE_JOB_ROOT", PIPELINE_JOB_ROOT)
     queue_enabled = get_config_bool("PIPELINE_QUEUE_ENABLED", True)
     queue_summary = summarize_jobs(queue_root) if queue_enabled else {"queued": 0, "count": 0}
-    return {
-        "running": bool(pid),
-        "pid": pid,
-        "queue_enabled": queue_enabled,
-        "queue_length": queue_summary.get("queued", 0),
-        "queue": queue_summary,
-        "active_job": active_job_from_state(state, bool(pid)),
-    }
+    return build_dashboard_status_payload(
+        pid,
+        queue_enabled,
+        queue_summary,
+        active_job_from_state(state, bool(pid)),
+    )
 
 
 @app.get("/api/config")
