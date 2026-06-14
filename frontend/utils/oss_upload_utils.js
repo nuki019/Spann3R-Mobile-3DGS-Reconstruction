@@ -151,10 +151,18 @@ function uploadFramesToBackend(frameList, progressCallback, resultCallback) {
           }
           var payload = res && res.data ? res.data : null;
           var ok = Boolean(payload && typeof payload === "object" && payload.status === "ok");
-          if (ok) {
+          var allowUpload = payload && typeof payload.allow_upload === "boolean" ? payload.allow_upload : true;
+          if (ok && allowUpload) {
             resolve({
               ok: true,
               message: ""
+            });
+            return;
+          }
+          if (ok) {
+            resolve({
+              ok: false,
+              message: "上传服务已连接，但当前阶段暂不接收新照片"
             });
             return;
           }

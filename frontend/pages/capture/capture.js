@@ -58,6 +58,7 @@ Page({
     uploadBlockLabel: "等待服务",
     uploadHealthOk: false,
     dashboardHealthOk: false,
+    queueUploadEnabled: false,
     phaseHint: "正在获取后端阶段和上传服务状态..."
   },
   cameraCtx: null,
@@ -140,15 +141,15 @@ Page({
     return phaseMap[phase] || (phase + "（未知映射）");
   },
 
-  getPhaseHint: function(phase, uploadHealthy, dashboardHealthy) {
+  getPhaseHint: function(phase, uploadHealthy, dashboardHealthy, uploadAllow, queueEnabled) {
+    if (this.isUploadAllowed(phase, uploadHealthy, dashboardHealthy, uploadAllow)) {
+      return queueEnabled ? "队列上传就绪，可继续提交新任务" : "上传服务就绪，可提交本批照片";
+    }
     if (phase === "spann3r") {
       return "Spann3R 重建处理中，上传已禁用";
     }
     if (phase === "gaussian" || phase === "export" || phase === "completed") {
       return "当前6006通常为 Viewer 阶段，上传不可用";
-    }
-    if (this.isUploadAllowed(phase, uploadHealthy, dashboardHealthy)) {
-      return "上传服务就绪，可调用 /upload";
     }
     if (this.canUploadByPhase(phase) && dashboardHealthy && !uploadHealthy) {
       return "状态服务已连通，但上传代理未就绪（检查 /upload-proxy/healthz）";
@@ -166,12 +167,18 @@ Page({
     return phase === "idle" || phase === "input" || phase === "upload" || phase === "stopped" || phase === "unknown";
   },
 
-  isUploadAllowed: function(phase, uploadHealthy, dashboardHealthy) {
-    return this.canUploadByPhase(phase) && Boolean(uploadHealthy);
+  isUploadAllowed: function(phase, uploadHealthy, dashboardHealthy, uploadAllow) {
+    if (!uploadHealthy) {
+      return false;
+    }
+    if (typeof uploadAllow === "boolean") {
+      return uploadAllow;
+    }
+    return this.canUploadByPhase(phase);
   },
 
-  getBackendStatusLabel: function(phase, uploadHealthy, dashboardHealthy) {
-    if (this.isUploadAllowed(phase, uploadHealthy, dashboardHealthy)) {
+  getBackendStatusLabel: function(phase, uploadHealthy, dashboardHealthy, uploadAllow) {
+    if (this.isUploadAllowed(phase, uploadHealthy, dashboardHealthy, uploadAllow)) {
       return "后端就绪";
     }
     if (!uploadHealthy && !dashboardHealthy) {
@@ -198,8 +205,8 @@ Page({
     return "暂不可传";
   },
 
-  getBackendStatusClass: function(phase, uploadHealthy, dashboardHealthy) {
-    if (this.isUploadAllowed(phase, uploadHealthy, dashboardHealthy)) {
+  getBackendStatusClass: function(phase, uploadHealthy, dashboardHealthy, uploadAllow) {
+    if (this.isUploadAllowed(phase, uploadHealthy, dashboardHealthy, uploadAllow)) {
       return "ok";
     }
     if (!uploadHealthy && !dashboardHealthy) {
@@ -239,20 +246,22 @@ Page({
     return "暂不可传";
   },
 
-  applyPhaseState: function(phase, uploadHealthy, dashboardHealthy) {
+  applyPhaseState: function(phase, uploadHealthy, dashboardHealthy, uploadAllow, queueEnabled) {
     var normalizedPhase = phase || "unknown";
     var healthOk = Boolean(uploadHealthy);
     var dashboardOk = Boolean(dashboardHealthy);
+    var allowUpload = this.isUploadAllowed(normalizedPhase, healthOk, dashboardOk, uploadAllow);
     this.setData({
       currentPhase: normalizedPhase,
       phaseText: this.getPhaseText(normalizedPhase),
-      phaseAllowUpload: this.isUploadAllowed(normalizedPhase, healthOk, dashboardOk),
-      backendStatusLabel: this.getBackendStatusLabel(normalizedPhase, healthOk, dashboardOk),
-      backendStatusClass: this.getBackendStatusClass(normalizedPhase, healthOk, dashboardOk),
+      phaseAllowUpload: allowUpload,
+      backendStatusLabel: this.getBackendStatusLabel(normalizedPhase, healthOk, dashboardOk, uploadAllow),
+      backendStatusClass: this.getBackendStatusClass(normalizedPhase, healthOk, dashboardOk, uploadAllow),
       uploadBlockLabel: this.getUploadBlockLabel(normalizedPhase, healthOk, dashboardOk),
       uploadHealthOk: healthOk,
       dashboardHealthOk: dashboardOk,
-      phaseHint: this.getPhaseHint(normalizedPhase, healthOk, dashboardOk)
+      queueUploadEnabled: Boolean(queueEnabled),
+      phaseHint: this.getPhaseHint(normalizedPhase, healthOk, dashboardOk, uploadAllow, queueEnabled)
     });
   },
 
@@ -315,7 +324,12 @@ Page({
           }
           var payload = res && res.data ? res.data : null;
           var ok = Boolean(payload && typeof payload === "object" && payload.status === "ok");
-          resolve(ok);
+          resolve({
+            ok: ok,
+            allowUpload: payload && typeof payload.allow_upload === "boolean" ? payload.allow_upload : undefined,
+            queueEnabled: Boolean(payload && payload.queue_enabled),
+            phase: payload && typeof payload.phase === "string" ? payload.phase : ""
+          });
         },
         fail: function(err) {
           reject(err);
@@ -333,13 +347,18 @@ Page({
     ]).then(function(resultList) {
       var phase = resultList[0].status === "fulfilled" ? resultList[0].value : "unknown";
       var dashboardHealthy = resultList[1].status === "fulfilled" ? resultList[1].value : false;
-      var uploadHealthy = resultList[2].status === "fulfilled" ? resultList[2].value : false;
-      that.applyPhaseState(phase, uploadHealthy, dashboardHealthy);
+      var uploadState = resultList[2].status === "fulfilled" ? resultList[2].value : { ok: false };
+      var uploadHealthy = Boolean(uploadState && uploadState.ok);
+      var uploadAllow = uploadState && typeof uploadState.allowUpload === "boolean" ? uploadState.allowUpload : undefined;
+      var queueEnabled = Boolean(uploadState && uploadState.queueEnabled);
+      that.applyPhaseState(phase, uploadHealthy, dashboardHealthy, uploadAllow, queueEnabled);
       return {
         phase: phase,
         uploadHealthy: uploadHealthy,
         dashboardHealthy: dashboardHealthy,
-        phaseAllowUpload: that.isUploadAllowed(phase, uploadHealthy, dashboardHealthy)
+        uploadAllow: uploadAllow,
+        queueEnabled: queueEnabled,
+        phaseAllowUpload: that.isUploadAllowed(phase, uploadHealthy, dashboardHealthy, uploadAllow)
       };
     }).catch(function() {
       if (!isSilent) {
@@ -349,6 +368,8 @@ Page({
         phase: "unknown",
         uploadHealthy: false,
         dashboardHealthy: false,
+        uploadAllow: false,
+        queueEnabled: false,
         phaseAllowUpload: false
       };
     });
@@ -969,7 +990,8 @@ Page({
         });
         wx.showModal({
           title: "当前不可上传",
-          content: "当前阶段：" + that.getPhaseText(state.phase) + "\n" + that.getPhaseHint(state.phase, state.uploadHealthy, state.dashboardHealthy),
+          content: "当前阶段：" + that.getPhaseText(state.phase) + "\n" +
+            that.getPhaseHint(state.phase, state.uploadHealthy, state.dashboardHealthy, state.uploadAllow, state.queueEnabled),
           showCancel: false
         });
         return;

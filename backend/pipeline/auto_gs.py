@@ -12,6 +12,14 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 import open3d as o3d
 
+from pipeline.job_queue import (
+    build_image_fingerprint as build_job_image_fingerprint,
+    job_images_dir,
+    list_images as list_job_images,
+    list_runnable_jobs,
+    mark_job,
+    sanitize_job_id,
+)
 from pipeline.task_state import PipelineStateStore
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
@@ -33,6 +41,7 @@ class PipelineConfig:
     scene_data_root: Path
     test_photo_root: Path
     archive_dir: Path
+    pipeline_job_root: Path
     scene_name_prefix: str
     viewer_port: int
     min_img_count: int
@@ -50,6 +59,7 @@ class PipelineConfig:
     run_once: bool
     clear_target_before_run: bool
     archive_input: bool
+    queue_enabled: bool
     clear_input_after_snapshot: bool
     max_scene_keep: int
     max_photo_sets_keep: int
@@ -77,6 +87,7 @@ class PipelineConfig:
             scene_data_root=scene_data_root,
             test_photo_root=Path(os.getenv("TEST_PHOTO_ROOT", str(root / "test_photo_sets"))),
             archive_dir=Path(os.getenv("ARCHIVE_DIR", "/root/autodl-tmp/input_images_archive")),
+            pipeline_job_root=Path(os.getenv("PIPELINE_JOB_ROOT", "/root/autodl-tmp/pipeline_jobs")),
             scene_name_prefix=os.getenv("SCENE_NAME_PREFIX", "scene"),
             viewer_port=int(os.getenv("VIEWER_PORT", "6006")),
             min_img_count=int(os.getenv("MIN_IMG_COUNT", "50")),
@@ -94,6 +105,7 @@ class PipelineConfig:
             run_once=_get_env_bool("RUN_ONCE", True),
             clear_target_before_run=_get_env_bool("CLEAR_TARGET_BEFORE_RUN", True),
             archive_input=_get_env_bool("ARCHIVE_INPUT", False),
+            queue_enabled=_get_env_bool("PIPELINE_QUEUE_ENABLED", True),
             clear_input_after_snapshot=_get_env_bool("CLEAR_INPUT_AFTER_SNAPSHOT", True),
             max_scene_keep=int(os.getenv("MAX_SCENES_KEEP", "5")),
             max_photo_sets_keep=int(os.getenv("MAX_PHOTO_SETS_KEEP", "5")),
@@ -222,6 +234,99 @@ def wait_until_upload_stable(
                     },
                     paths={"watch_dir": str(config.watch_dir)},
                 )
+        time.sleep(config.poll_interval_sec)
+
+
+def wait_until_queued_job_stable(
+    config: PipelineConfig,
+    state_store: Optional[PipelineStateStore] = None,
+) -> Tuple[Dict[str, object], List[Path]]:
+    config.pipeline_job_root.mkdir(parents=True, exist_ok=True)
+    stable_state: Dict[str, Tuple[Tuple[Tuple[str, int, int], ...], int]] = {}
+    print(f"🧾 队列模式已启用，监听任务目录: {config.pipeline_job_root}")
+
+    while True:
+        jobs = list_runnable_jobs(config.pipeline_job_root)
+        queue_length = len(jobs)
+        if not jobs:
+            if state_store:
+                state_store.update(
+                    phase="input",
+                    status="running",
+                    message="等待新的上传任务进入队列",
+                    metrics={
+                        "queue_length": 0,
+                        "uploaded_images": 0,
+                        "min_img_count": config.min_img_count,
+                        "stable_polls": config.stable_polls,
+                    },
+                    paths={"pipeline_job_root": str(config.pipeline_job_root)},
+                )
+            time.sleep(config.poll_interval_sec)
+            continue
+
+        for job in jobs:
+            job_id = sanitize_job_id(str(job.get("id") or job.get("job_id") or ""))
+            images_dir = job_images_dir(config.pipeline_job_root, job_id)
+            images = list_job_images(images_dir)
+            image_count = len(images)
+            last_fingerprint, stable_rounds = stable_state.get(job_id, (tuple(), 0))
+
+            if image_count >= config.min_img_count:
+                fingerprint = build_job_image_fingerprint(images)
+                if fingerprint == last_fingerprint:
+                    stable_rounds += 1
+                else:
+                    stable_rounds = 0
+                stable_state[job_id] = (fingerprint, stable_rounds)
+                print(
+                    f"⏳ 队列任务 {job_id}: {stable_rounds}/{config.stable_polls} | 图片数: {image_count}",
+                    end="\r",
+                )
+                if state_store:
+                    state_store.update(
+                        phase="input",
+                        status="running",
+                        job_id=job_id,
+                        message=f"正在等待队列任务 {job_id} 上传稳定",
+                        metrics={
+                            "queue_length": queue_length,
+                            "uploaded_images": image_count,
+                            "stable_rounds": stable_rounds,
+                            "stable_polls": config.stable_polls,
+                            "min_img_count": config.min_img_count,
+                        },
+                    paths={
+                        "pipeline_job_root": str(config.pipeline_job_root),
+                        "job_input_dir": str(images_dir),
+                        "queue_job_id": job_id,
+                    },
+                )
+                if stable_rounds >= config.stable_polls:
+                    mark_job(config.pipeline_job_root, job_id, "running", "训练流程已开始消费该任务")
+                    print(f"\n✅ 队列任务 {job_id} 上传稳定，共 {image_count} 张图片。")
+                    return job, images
+            else:
+                stable_state[job_id] = (last_fingerprint, 0)
+                if state_store:
+                    state_store.update(
+                        phase="input",
+                        status="running",
+                        job_id=job_id,
+                        message=f"队列任务 {job_id} 等待更多图片",
+                        metrics={
+                            "queue_length": queue_length,
+                            "uploaded_images": image_count,
+                            "stable_rounds": 0,
+                            "stable_polls": config.stable_polls,
+                            "min_img_count": config.min_img_count,
+                        },
+                        paths={
+                            "pipeline_job_root": str(config.pipeline_job_root),
+                            "job_input_dir": str(images_dir),
+                            "queue_job_id": job_id,
+                        },
+                    )
         time.sleep(config.poll_interval_sec)
 
 
@@ -697,8 +802,16 @@ def run_pipeline_once(
     )
 
     print("🧭 阶段切换: 输入监测")
-    images = wait_until_upload_stable(config, state_store=state_store)
+    queue_job: Optional[Dict[str, object]] = None
+    if config.queue_enabled:
+        queue_job, images = wait_until_queued_job_stable(config, state_store=state_store)
+    else:
+        images = wait_until_upload_stable(config, state_store=state_store)
     scene_name = build_scene_name(config, images)
+    if queue_job:
+        queued_scene = str(queue_job.get("scene_name") or "").strip()
+        if queued_scene:
+            scene_name = sanitize_name(queued_scene)
     state_store.update(
         job_id=scene_name,
         scene_name=scene_name,
@@ -706,6 +819,11 @@ def run_pipeline_once(
         status="running",
         message="上传稳定，已创建场景",
         metrics={"uploaded_images": len(images)},
+        paths={
+            "job_input_dir": str(images[0].parent) if images else "",
+            "pipeline_job_root": str(config.pipeline_job_root),
+            "queue_job_id": str(queue_job.get("id") or queue_job.get("job_id") or "") if queue_job else "",
+        },
     )
     scene_photo_dir = snapshot_uploaded_images(config, images, scene_name)
     state_store.update(paths={"scene_photo_dir": str(scene_photo_dir)})
@@ -782,6 +900,15 @@ def run_pipeline_once(
         artifacts=gaussian_artifacts,
         paths={"upload_cleanup": archive_summary},
     )
+    if queue_job:
+        mark_job(
+            config.pipeline_job_root,
+            str(queue_job.get("id") or queue_job.get("job_id") or scene_name),
+            "completed",
+            "训练与导出完成",
+            scene_name=scene_name,
+            extra={"artifacts": gaussian_artifacts, "scene_data_dir": str(scene_target_dir)},
+        )
 
 
 def main() -> None:
@@ -807,7 +934,17 @@ def main() -> None:
                 break
         except Exception as error:
             print(f"\n❌ 流水线异常: {error}")
-            state_store.fail(error)
+            failed_state = state_store.fail(error)
+            paths = failed_state.get("paths") if isinstance(failed_state.get("paths"), dict) else {}
+            queue_job_id = str(paths.get("queue_job_id") or "")
+            if config.queue_enabled and queue_job_id:
+                mark_job(
+                    config.pipeline_job_root,
+                    queue_job_id,
+                    "failed",
+                    "训练失败",
+                    error=str(error),
+                )
             if config.run_once:
                 raise
             print(f"⏳ {config.retry_interval_sec} 秒后重试...")

@@ -411,14 +411,15 @@ Page({
     return phase === "idle" || phase === "input" || phase === "upload" || phase === "stopped" || phase === "unknown";
   },
 
-  getPhaseState(phase, uploadHealthy, dashboardHealthy) {
+  getPhaseState(phase, uploadHealthy, dashboardHealthy, uploadAllow, queueEnabled) {
     const phaseKey = phase || "unknown";
-    const canUpload = this.canUploadByPhase(phaseKey) && Boolean(uploadHealthy);
+    const canUpload = Boolean(uploadHealthy) &&
+      (typeof uploadAllow === "boolean" ? uploadAllow : this.canUploadByPhase(phaseKey));
     const viewerLikelyReady = phaseKey === "gaussian" || phaseKey === "export" || phaseKey === "completed";
     if (phaseKey === "input") {
       return {
         phaseKey: phaseKey,
-        phaseActionHint: canUpload ? "当前为 input 阶段：上传服务就绪，可上传帧到 /upload。" : "当前为 input 阶段，但健康检查未通过（优先检查 uu 域名 /healthz）。",
+        phaseActionHint: canUpload ? "当前为 input 阶段：上传服务就绪，可上传采集帧。" : "当前为 input 阶段，但健康检查未通过（优先检查 uu 域名 /healthz）。",
         phaseCanUpload: canUpload,
         phaseCanViewer: viewerLikelyReady,
         phaseCanDownload: false
@@ -428,7 +429,7 @@ Page({
       return {
         phaseKey: phaseKey,
         phaseActionHint: "当前为 spann3r 阶段：重建处理中，上传已禁用。",
-        phaseCanUpload: false,
+        phaseCanUpload: canUpload,
         phaseCanViewer: viewerLikelyReady,
         phaseCanDownload: false
       };
@@ -436,8 +437,8 @@ Page({
     if (phaseKey === "gaussian") {
       return {
         phaseKey: phaseKey,
-        phaseActionHint: "当前为 gaussian 阶段：可访问 Viewer，Gaussian 产物可能尚在生成。",
-        phaseCanUpload: false,
+        phaseActionHint: canUpload && queueEnabled ? "当前为 gaussian 阶段：Viewer 可访问，新采集会进入等待队列。" : "当前为 gaussian 阶段：可访问 Viewer，Gaussian 产物可能尚在生成。",
+        phaseCanUpload: canUpload,
         phaseCanViewer: viewerLikelyReady,
         phaseCanDownload: true
       };
@@ -445,8 +446,8 @@ Page({
     if (phaseKey === "export") {
       return {
         phaseKey: phaseKey,
-        phaseActionHint: "当前为 export 阶段：训练已结束，正在导出可下载点云。",
-        phaseCanUpload: false,
+        phaseActionHint: canUpload && queueEnabled ? "当前为 export 阶段：正在导出点云，新采集会进入等待队列。" : "当前为 export 阶段：训练已结束，正在导出可下载点云。",
+        phaseCanUpload: canUpload,
         phaseCanViewer: viewerLikelyReady,
         phaseCanDownload: true
       };
@@ -454,8 +455,8 @@ Page({
     if (phaseKey === "completed") {
       return {
         phaseKey: phaseKey,
-        phaseActionHint: "当前为 completed 阶段：可访问 Viewer 与下载点云。",
-        phaseCanUpload: false,
+        phaseActionHint: canUpload && queueEnabled ? "当前为 completed 阶段：可查看结果，也可继续上传新任务。" : "当前为 completed 阶段：可访问 Viewer 与下载点云。",
+        phaseCanUpload: canUpload,
         phaseCanViewer: viewerLikelyReady,
         phaseCanDownload: true
       };
@@ -516,7 +517,7 @@ Page({
     };
   },
 
-  buildBackendPhases(progressData, uploadHealthOk, dashboardHealthOk, statusData) {
+  buildBackendPhases(progressData, uploadHealthOk, dashboardHealthOk, statusData, uploadAllow, queueEnabled) {
     const phase = progressData.phaseKey || "unknown";
     const runningText = statusData && statusData.runningText ? statusData.runningText : "-";
     const sceneText = progressData.sceneNameText && progressData.sceneNameText !== "-" ? progressData.sceneNameText : "等待场景";
@@ -528,10 +529,12 @@ Page({
     let uploadState = "等待";
     let uploadClass = "pending";
     let uploadDetail = dashboardHealthOk ? "状态服务已连接" : "等待后端状态服务";
-    if (uploadHealthOk && this.canUploadByPhase(phase)) {
-      uploadState = "可上传";
+    const canUploadNow = uploadHealthOk &&
+      (typeof uploadAllow === "boolean" ? uploadAllow : this.canUploadByPhase(phase));
+    if (canUploadNow) {
+      uploadState = queueEnabled ? "队列就绪" : "可上传";
       uploadClass = "running";
-      uploadDetail = "上传入口就绪，已接收 " + uploadedText + " 张";
+      uploadDetail = queueEnabled ? "新采集会进入等待队列，" + statusData.queueText : "上传入口就绪，已接收 " + uploadedText + " 张";
     } else if (uploadHealthOk) {
       uploadState = "已完成";
       uploadClass = "done";
@@ -635,8 +638,10 @@ Page({
     ]).then((resultList) => {
       const dashboardHealthOk = resultList[0].status === "fulfilled" &&
         Boolean(resultList[0].value && typeof resultList[0].value === "object" && resultList[0].value.status === "ok");
-      const uploadHealthOk = resultList[1].status === "fulfilled" &&
-        Boolean(resultList[1].value && typeof resultList[1].value === "object" && resultList[1].value.status === "ok");
+      const uploadProxyPayload = resultList[1].status === "fulfilled" ? toObject(resultList[1].value) : {};
+      const uploadHealthOk = Boolean(uploadProxyPayload && uploadProxyPayload.status === "ok");
+      const uploadAllow = typeof uploadProxyPayload.allow_upload === "boolean" ? uploadProxyPayload.allow_upload : undefined;
+      const queueEnabled = Boolean(uploadProxyPayload.queue_enabled);
       const uploadHealth = uploadHealthOk ? "正常" : "不可用";
       const dashboardHealth = dashboardHealthOk ? "正常" : "异常";
       const uploadStats = resultList[2].status === "fulfilled" ? this.buildUploadStatsText(resultList[2].value) : "拉取失败";
@@ -656,8 +661,8 @@ Page({
         uploadedImagesText: "-",
         percentText: "-"
       };
-      const phaseState = this.getPhaseState(progressData.phaseKey, uploadHealthOk, dashboardHealthOk);
-      const backendPhases = this.buildBackendPhases(progressData, uploadHealthOk, dashboardHealthOk, statusData);
+      const phaseState = this.getPhaseState(progressData.phaseKey, uploadHealthOk, dashboardHealthOk, uploadAllow, queueEnabled);
+      const backendPhases = this.buildBackendPhases(progressData, uploadHealthOk, dashboardHealthOk, statusData, uploadAllow, queueEnabled);
 
       this.fastPollFailed = resultList[0].status === "rejected" ||
         resultList[1].status === "rejected" ||

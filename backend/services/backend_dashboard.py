@@ -3,6 +3,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import signal
 import subprocess
 import sys
@@ -19,6 +20,13 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
+from pipeline.job_queue import (
+    job_images_dir,
+    list_jobs,
+    record_uploaded_frame,
+    sanitize_job_id,
+    summarize_jobs,
+)
 from pipeline.task_state import PipelineStateStore, build_sections
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
@@ -40,6 +48,7 @@ UPLOAD_MAX_FILE_SIZE_MB = int(os.getenv("UPLOAD_MAX_FILE_SIZE_MB", "25"))
 UPLOAD_MAX_FILE_SIZE_BYTES = UPLOAD_MAX_FILE_SIZE_MB * 1024 * 1024
 
 WATCH_DIR = Path(os.getenv("WATCH_DIR", "/root/autodl-tmp/input_images")).resolve()
+PIPELINE_JOB_ROOT = Path(os.getenv("PIPELINE_JOB_ROOT", "/root/autodl-tmp/pipeline_jobs")).resolve()
 SCENE_DATA_ROOT = Path(os.getenv("SCENE_DATA_ROOT", "/root/autodl-tmp/gs_train/scenes")).resolve()
 TEST_PHOTO_ROOT = Path(os.getenv("TEST_PHOTO_ROOT", str(ROOT_DIR / "test_photo_sets"))).resolve()
 
@@ -78,6 +87,8 @@ DEFAULT_CONFIG: Dict[str, str] = {
     "VIEWER_PORT": "6006",
     "WATCH_DIR": str(WATCH_DIR),
     "UPLOAD_SAVE_DIR": str(WATCH_DIR),
+    "PIPELINE_JOB_ROOT": str(PIPELINE_JOB_ROOT),
+    "PIPELINE_QUEUE_ENABLED": "true",
     "SCENE_DATA_ROOT": str(SCENE_DATA_ROOT),
     "TEST_PHOTO_ROOT": str(TEST_PHOTO_ROOT),
     "ARCHIVE_DIR": "/root/autodl-tmp/input_images_archive",
@@ -117,6 +128,8 @@ CONFIG_HELP: Dict[str, str] = {
     "VIEWER_PORT": "Nerfstudio Viewer 端口。",
     "WATCH_DIR": "上传照片落盘目录。",
     "UPLOAD_SAVE_DIR": "上传代理保存目录，默认与 WATCH_DIR 一致。",
+    "PIPELINE_JOB_ROOT": "队列任务根目录，每个上传 session 会形成一个 job 子目录。",
+    "PIPELINE_QUEUE_ENABLED": "是否启用单卡任务队列；启用后上传会按 job/session 隔离。",
     "SCENE_DATA_ROOT": "多场景训练数据根目录（每次自动新建场景子目录）。",
     "TEST_PHOTO_ROOT": "测试照片留存目录（中期交付可复用）。",
     "ARCHIVE_DIR": "旧上传图片归档目录。",
@@ -254,6 +267,14 @@ def list_images(directory: Path) -> List[Path]:
 def get_config_path(config_key: str, fallback: Path) -> Path:
     values = read_env_file()
     return Path(values.get(config_key, str(fallback))).resolve()
+
+
+def get_config_bool(config_key: str, default: bool) -> bool:
+    values = read_env_file()
+    value = values.get(config_key, "").strip().lower()
+    if not value:
+        return default
+    return value in {"1", "true", "yes", "y", "on"}
 
 
 def read_pipeline_state() -> Dict[str, object]:
@@ -648,6 +669,22 @@ def clear_uploaded_images() -> int:
     return deleted
 
 
+def clear_upload_jobs() -> int:
+    queue_root = get_config_path("PIPELINE_JOB_ROOT", PIPELINE_JOB_ROOT)
+    if not queue_root.exists():
+        return 0
+    deleted = 0
+    for job in list_jobs(queue_root, limit=1000):
+        status = str(job.get("status") or "")
+        if status in {"running"}:
+            continue
+        path = queue_root / sanitize_job_id(str(job.get("id") or job.get("job_id") or ""))
+        if path.exists():
+            shutil.rmtree(path, ignore_errors=True)
+            deleted += 1
+    return deleted
+
+
 def validate_upload_token(form_token: str, header_token: str) -> None:
     if not UPLOAD_AUTH_TOKEN:
         return
@@ -680,6 +717,8 @@ def can_upload_by_phase(phase: str) -> bool:
 
 def upload_stats_payload() -> Dict[str, object]:
     watch_dir = get_config_path("WATCH_DIR", WATCH_DIR)
+    queue_enabled = get_config_bool("PIPELINE_QUEUE_ENABLED", True)
+    queue_root = get_config_path("PIPELINE_JOB_ROOT", PIPELINE_JOB_ROOT)
     images = list_images(watch_dir)
     total_bytes = sum(item.stat().st_size for item in images)
     phase = current_phase_for_upload_gate()
@@ -687,10 +726,13 @@ def upload_stats_payload() -> Dict[str, object]:
     return {
         "status": "ok",
         "phase": phase,
-        "allow_upload": can_upload_by_phase(phase),
+        "allow_upload": queue_enabled or can_upload_by_phase(phase),
+        "queue_enabled": queue_enabled,
+        "queue": summarize_jobs(queue_root) if queue_enabled else {"count": 0, "queued": 0},
         "uploaded_files": len(images),
         "uploaded_bytes": total_bytes,
-        "save_dir": str(watch_dir),
+        "save_dir": str(queue_root if queue_enabled else watch_dir),
+        "legacy_save_dir": str(watch_dir),
         "max_file_size_mb": UPLOAD_MAX_FILE_SIZE_MB,
         "active_job": active_job_from_state(state, bool(get_running_pipeline_pid())),
     }
@@ -704,23 +746,26 @@ async def save_uploaded_frame(
     session_id: str = "",
 ) -> Dict[str, object]:
     phase = current_phase_for_upload_gate()
-    if not can_upload_by_phase(phase):
+    queue_enabled = get_config_bool("PIPELINE_QUEUE_ENABLED", True)
+    if not queue_enabled and not can_upload_by_phase(phase):
         raise HTTPException(status_code=409, detail=f"当前阶段不可上传：{phase}")
 
     validate_upload_token(form_token, header_token)
     suffix = validate_upload_extension(frame_file.filename or "")
 
+    queue_root = get_config_path("PIPELINE_JOB_ROOT", PIPELINE_JOB_ROOT)
     watch_dir = get_config_path("WATCH_DIR", WATCH_DIR)
-    watch_dir.mkdir(parents=True, exist_ok=True)
+    safe_session = sanitize_job_id(session_id or "wx")
+    save_dir = job_images_dir(queue_root, safe_session) if queue_enabled else watch_dir
+    save_dir.mkdir(parents=True, exist_ok=True)
 
-    safe_session = re.sub(r"[^A-Za-z0-9_.-]+", "_", session_id or "wx")[:80]
     safe_index = re.sub(r"[^0-9]+", "", frame_index or "")[:8]
     index_part = f"_{safe_index}" if safe_index else ""
     filename = (
         f"{datetime.utcnow().strftime('%Y%m%d%H%M%S_%f')}_"
         f"{safe_session}{index_part}_{uuid.uuid4().hex[:8]}{suffix}"
     )
-    save_path = watch_dir / filename
+    save_path = save_dir / filename
 
     total_bytes = 0
     try:
@@ -745,11 +790,24 @@ async def save_uploaded_frame(
     finally:
         await frame_file.close()
 
-    manifest = watch_dir / "_upload_manifest.jsonl"
+    if queue_enabled:
+        job = record_uploaded_frame(
+            queue_root,
+            safe_session,
+            filename=filename,
+            size_bytes=total_bytes,
+            frame_index=frame_index,
+            source_name=frame_file.filename or "",
+        )
+    else:
+        job = {}
+
+    manifest = save_dir / "_upload_manifest.jsonl"
     manifest_row = {
         "filename": filename,
         "bytes": total_bytes,
         "phase": phase,
+        "job_id": safe_session if queue_enabled else "",
         "frame_index": frame_index,
         "session_id": session_id,
         "created_at": datetime.utcnow().isoformat() + "Z",
@@ -764,6 +822,9 @@ async def save_uploaded_frame(
         "filename": filename,
         "bytes": total_bytes,
         "phase": phase,
+        "job_id": safe_session if queue_enabled else "",
+        "queue_enabled": queue_enabled,
+        "job": job,
     }
 
 
@@ -1350,10 +1411,15 @@ async def index() -> str:
 async def api_status():
     pid = get_running_pipeline_pid()
     state = read_pipeline_state()
+    queue_root = get_config_path("PIPELINE_JOB_ROOT", PIPELINE_JOB_ROOT)
+    queue_enabled = get_config_bool("PIPELINE_QUEUE_ENABLED", True)
+    queue_summary = summarize_jobs(queue_root) if queue_enabled else {"queued": 0, "count": 0}
     return {
         "running": bool(pid),
         "pid": pid,
-        "queue_length": 0,
+        "queue_enabled": queue_enabled,
+        "queue_length": queue_summary.get("queued", 0),
+        "queue": queue_summary,
         "active_job": active_job_from_state(state, bool(pid)),
     }
 
@@ -1460,26 +1526,34 @@ async def api_progress():
 @app.get("/api/uploads/summary")
 async def api_uploads_summary():
     watch_dir = get_config_path("WATCH_DIR", WATCH_DIR)
+    queue_root = get_config_path("PIPELINE_JOB_ROOT", PIPELINE_JOB_ROOT)
+    queue_enabled = get_config_bool("PIPELINE_QUEUE_ENABLED", True)
     archive_dir = get_config_path("ARCHIVE_DIR", Path("/root/autodl-tmp/input_images_archive"))
     values = read_env_file()
     all_images = list_images(watch_dir)
     items = discover_uploaded_images(limit=200)
+    jobs = list_jobs(queue_root, limit=200) if queue_enabled else []
     return {
         "watch_dir": str(watch_dir),
+        "queue_enabled": queue_enabled,
+        "queue_root": str(queue_root),
+        "queue": summarize_jobs(queue_root) if queue_enabled else {"count": 0, "queued": 0},
         "archive_dir": str(archive_dir),
         "cleanup_mode": values.get("RESTART_UPLOAD_CLEANUP", "archive"),
         "archive_keep": values.get("RESTART_UPLOAD_ARCHIVE_KEEP", "5"),
         "count": len(all_images),
         "latest_mtime": items[0]["mtime"] if items else None,
         "items": items,
+        "jobs": jobs,
         "archives": discover_upload_archives(limit=20),
     }
 
 
 @app.post("/api/uploads/clear")
 async def api_uploads_clear(_: None = Depends(require_dashboard_token)):
-    deleted = clear_uploaded_images()
-    return {"ok": True, "deleted": deleted}
+    deleted_files = clear_uploaded_images()
+    deleted_jobs = clear_upload_jobs()
+    return {"ok": True, "deleted": deleted_files + deleted_jobs, "deleted_files": deleted_files, "deleted_jobs": deleted_jobs}
 
 
 @app.get("/api/scenes/summary")
@@ -1495,6 +1569,30 @@ async def api_scenes_summary():
         "datasets": datasets,
         "photo_scenes": photo_scenes,
     }
+
+
+@app.get("/api/jobs")
+async def api_jobs():
+    queue_root = get_config_path("PIPELINE_JOB_ROOT", PIPELINE_JOB_ROOT)
+    jobs = list_jobs(queue_root, limit=300)
+    return {
+        "queue_root": str(queue_root),
+        "summary": summarize_jobs(queue_root),
+        "items": jobs,
+    }
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def api_job_cancel(job_id: str, _: None = Depends(require_dashboard_token)):
+    queue_root = get_config_path("PIPELINE_JOB_ROOT", PIPELINE_JOB_ROOT)
+    safe_id = sanitize_job_id(job_id)
+    job = next((item for item in list_jobs(queue_root, limit=1000) if item.get("id") == safe_id), None)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"任务不存在: {safe_id}")
+    if str(job.get("status") or "") == "running":
+        raise HTTPException(status_code=409, detail="运行中任务请使用停止训练")
+    updated = mark_job(queue_root, safe_id, "stopped", "用户取消排队任务")
+    return {"ok": True, "job": updated}
 
 
 @app.post("/api/pointclouds/clear")

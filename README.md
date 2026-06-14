@@ -193,10 +193,10 @@ python demo.py --demo_path ./assets/examples/s00567 --kf_every 10 --vis --vis_ca
 - 默认使用微信临时文件路径完成清晰度筛选和上传，避免每次采集都写入相册
 - 临时路径不可用时才回退 `wx.saveFile`，新一轮采集会清理上一次缓存
 
-**上传门控（双条件）：**
-- `phase ∈ {idle, input, stopped, unknown}`
-- `6008 /upload-proxy/healthz` 返回 `status: "ok"`
-- 两个条件同时满足才允许上传
+**上传门控：**
+- 队列模式默认开启：`6008 /upload-proxy/healthz` 返回 `allow_upload: true` 时即可上传，新采集会进入 `<PIPELINE_JOB_ROOT>/<session_id>/images`
+- 关闭队列模式时沿用旧门控：`phase ∈ {idle, input, stopped, unknown}` 且上传代理健康检查通过
+- 上传批次按 `session_id` 隔离，单张卡仍按队列顺序执行 Spann3R 与 3DGaussian
 
 ### 预览页（preview）
 
@@ -213,8 +213,8 @@ python demo.py --demo_path ./assets/examples/s00567 --kf_every 10 --vis --vis_ca
 | 阶段 | 上传 | Viewer | 下载 |
 |------|------|--------|------|
 | `idle` / `input` / `stopped` | 可用（健康检查通过时） | - | - |
-| `spann3r` | 禁用 | - | - |
-| `gaussian` / `completed` | 禁用 | 可用 | 可用 |
+| `spann3r` | 队列模式可继续接收新任务 | - | - |
+| `gaussian` / `export` / `completed` | 队列模式可继续接收新任务 | 可用 | 可用 |
 
 **管理动作（可选鉴权）：**
 - 开始流程 → `POST /api/pipeline/start`
@@ -239,6 +239,8 @@ python demo.py --demo_path ./assets/examples/s00567 --kf_every 10 --vis --vis_ca
 | `GET` | `/api/status` | 流水线进程状态（`running` / `pid`） |
 | `GET` | `/api/progress` | 阶段、进度、loss、场景名 |
 | `GET` | `/api/logs?lines=200` | 后端日志 |
+| `GET` | `/api/jobs` | 队列任务列表 |
+| `POST` | `/api/jobs/{job_id}/cancel` | 取消未开始的排队任务 |
 | `GET` | `/api/uploads/summary` | 上传目录摘要 |
 | `GET` | `/api/scenes/summary` | 场景与数据集摘要 |
 | `POST` | `/api/pipeline/start` | 启动训练流水线 |
@@ -284,6 +286,8 @@ idle → input → spann3r → gaussian → completed
 | `NS_EXPORT_AFTER_TRAIN` | 训练后是否自动导出 |
 | `GAUSSIAN_CROP_PADDING_RATIO` | Gaussian 裁切填充比例 |
 | `PIPELINE_STATE_FILE` | 后端统一任务状态 JSON，供前端状态页读取 |
+| `PIPELINE_QUEUE_ENABLED` | 启用单卡任务队列；上传按 session/job 隔离，训练按队列顺序执行 |
+| `PIPELINE_JOB_ROOT` | 队列任务根目录，默认 `/root/autodl-tmp/pipeline_jobs` |
 | `RESTART_UPLOAD_CLEANUP` | 重启时旧上传图片处理策略：`archive` / `delete` / `keep` |
 
 ## 每场景产出资产

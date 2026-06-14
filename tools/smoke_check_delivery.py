@@ -7,6 +7,7 @@ import hashlib
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -15,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PYTHON_FILES = [
     ROOT / "backend" / "services" / "backend_dashboard.py",
     ROOT / "backend" / "services" / "upload_server.py",
+    ROOT / "backend" / "pipeline" / "job_queue.py",
     ROOT / "backend" / "pipeline" / "task_state.py",
     ROOT / "backend" / "pipeline" / "auto_gs.py",
     ROOT / "backend" / "pipeline" / "backend_4090.py",
@@ -114,12 +116,65 @@ def check_required_text() -> None:
     print("[OK] required delivery text")
 
 
+def check_job_queue_smoke() -> None:
+    sys.path.insert(0, str(ROOT / "backend"))
+    from pipeline.job_queue import (  # pylint: disable=import-outside-toplevel
+        job_images_dir,
+        list_runnable_jobs,
+        mark_job,
+        record_uploaded_frame,
+        sanitize_job_id,
+        summarize_jobs,
+    )
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        queue_root = Path(tmp_dir)
+        job_id = sanitize_job_id("wx/session 01")
+        images_dir = job_images_dir(queue_root, job_id)
+        images_dir.mkdir(parents=True, exist_ok=True)
+        (images_dir / "frame_000.jpg").write_bytes(b"fake-jpeg")
+
+        job = record_uploaded_frame(
+            queue_root,
+            job_id,
+            filename="frame_000.jpg",
+            size_bytes=9,
+            frame_index="0",
+            source_name="frame.jpg",
+        )
+        if job.get("status") != "queued":
+            fail("job queue did not create a queued job")
+        if len(list_runnable_jobs(queue_root)) != 1:
+            fail("job queue did not expose the queued job as runnable")
+
+        mark_job(queue_root, job_id, "running", "running in smoke test")
+        record_uploaded_frame(
+            queue_root,
+            job_id,
+            filename="frame_001.jpg",
+            size_bytes=9,
+            frame_index="1",
+            source_name="frame.jpg",
+        )
+        if len(list_runnable_jobs(queue_root)) != 0:
+            fail("late uploads must not reset running jobs to queued")
+
+        mark_job(queue_root, job_id, "stopped", "cancelled in smoke test")
+        if list_runnable_jobs(queue_root):
+            fail("stopped jobs must not be runnable")
+        summary = summarize_jobs(queue_root)
+        if summary.get("count") != 1 or summary.get("queued") != 0:
+            fail("job queue summary is inconsistent")
+    print("[OK] job queue smoke")
+
+
 def main() -> None:
     check_exists(PYTHON_FILES + JS_FILES + TEXT_FILES_TO_SCAN)
     check_python_syntax(PYTHON_FILES)
     check_js_syntax(JS_FILES)
     check_no_secrets(TEXT_FILES_TO_SCAN)
     check_required_text()
+    check_job_queue_smoke()
     print("[OK] delivery smoke checks passed")
 
 

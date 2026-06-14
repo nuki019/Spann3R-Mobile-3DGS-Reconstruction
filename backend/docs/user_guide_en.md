@@ -8,12 +8,10 @@ Replace `<HOST>` with your server IP/domain.
 
 - Dashboard: `http://<HOST>:6008/`
 - Download page: `http://<HOST>:6008/downloads`
-- Shared upload/viewer port: `http://<HOST>:6006/`
+- Viewer: `http://<HOST>:6006/`
+- Upload proxy: `http://<HOST>:6008/upload-proxy/upload`
 
-Important: port `6006` is reused by phase.
-
-- Upload phase: `6006` receives images
-- Training phase: `6006` serves Nerfstudio Viewer
+Important: `6008` is the daily entry for dashboard, status APIs, upload proxy, and downloads. `6006` is reserved for the Nerfstudio Viewer. Single-GPU queue mode is enabled by default, so new uploads can wait in queue while the current scene is training.
 
 ## 2. First Startup
 
@@ -30,6 +28,7 @@ Health checks:
 
 ```bash
 curl http://127.0.0.1:6008/healthz
+curl http://127.0.0.1:6008/upload-proxy/healthz
 curl http://127.0.0.1:6008/api/status
 ```
 
@@ -50,10 +49,12 @@ Visit `http://<HOST>:6008/` and make sure it loads.
 
 ### Step 2: Upload Photos
 
-You can upload through your frontend, or via API:
+You can upload through your frontend, or via the 6008 upload proxy:
 
 ```bash
-curl -X POST "http://<HOST>:6006/upload" \
+curl -X POST "http://<HOST>:6008/upload-proxy/upload" \
+  -F "session_id=demo_job_001" \
+  -F "frame_index=0" \
   -F "frame_file=@/path/to/frame.jpg"
 ```
 
@@ -62,6 +63,7 @@ Recommendations:
 - Keep photos from the same scene and continuous camera motion
 - Reach at least `MIN_IMG_COUNT` images (default: 60)
 - After upload, wait for stability detection
+- Use one `session_id` per photo batch. The mini program generates it automatically.
 
 ### Step 3: Watch Phase Transitions
 
@@ -70,6 +72,7 @@ Dashboard phases:
 - `input`: waiting for upload stability
 - `spann3r`: reconstruction and conversion
 - `gaussian`: training and export
+- `export`: point cloud export after training
 - `completed`: done
 
 ### Step 4: Open Viewer

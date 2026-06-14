@@ -15,6 +15,7 @@
 
 - `6008` 是日常入口，负责管理台、状态接口、上传代理和下载页。
 - `6006` 主要用于 Nerfstudio Viewer，可视化通常在 Gaussian 阶段可用。
+- 默认开启单卡队列：训练中也可以继续上传新场景，新任务会排队等待当前训练完成。
 
 ## 2. 首次启动
 
@@ -54,17 +55,12 @@ bash restart_backend_stack.sh
 
 ### 第 2 步：上传照片
 
-可通过你的前端页面上传，也可用接口上传：
-
-```bash
-curl -X POST "http://<HOST>:6006/upload" \
-  -F "frame_file=@/path/to/frame.jpg"
-```
-
-若使用当前 6008 上传代理，推荐：
+可通过你的前端页面上传，也可用 6008 上传代理上传：
 
 ```bash
 curl -X POST "http://<HOST>:6008/upload-proxy/upload" \
+  -F "session_id=demo_job_001" \
+  -F "frame_index=0" \
   -F "frame_file=@/path/to/frame.jpg"
 ```
 
@@ -73,6 +69,7 @@ curl -X POST "http://<HOST>:6008/upload-proxy/upload" \
 - 使用同一场景、连续拍摄照片
 - 图片数量至少达到 `MIN_IMG_COUNT`（默认 60）
 - 上传完成后等待系统自动判定“稳定”
+- 同一批照片使用同一个 `session_id`；小程序会自动生成，无需手动填写
 
 ### 第 3 步：观察阶段切换
 
@@ -81,6 +78,7 @@ curl -X POST "http://<HOST>:6008/upload-proxy/upload" \
 - `input`：等待上传完成
 - `spann3r`：执行重建与数据转换
 - `gaussian`：执行训练与导出
+- `export`：训练结束，正在导出点云
 - `completed`：完成
 
 ### 第 4 步：打开 Viewer

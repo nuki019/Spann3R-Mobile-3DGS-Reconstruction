@@ -25,7 +25,7 @@ ss -lntp | grep -E ':6006|:6008|:7006' || true
 
 - `phase=input`：正在等待上传或上传稳定。
 - `phase=spann3r`：正在执行 Spann3R 重建。
-- `phase=gaussian`：正在训练或 Viewer 展示，上传入口会暂时关闭。
+- `phase=gaussian`：正在训练或 Viewer 展示；队列模式下 6008 仍可接收新上传任务。
 - `phase=completed`：流程已完成，可到下载页获取结果。
 
 ## 3. 结束当前训练
@@ -56,8 +56,8 @@ pkill -KILL -f 'ns-train|pipeline.backend_4090|services.upload_server' || true
 
 ## 4. 重启后端并回到可上传状态
 
-用于结束旧训练后重新采集、重新上传。上传图片默认保存在 `/root/autodl-tmp/input_images`，重启脚本会先处理旧上传文件。
-每次上传会同时追加 `_upload_manifest.jsonl`，用于记录帧序号、session、文件大小和保存时间；训练流程状态写入 `/root/autodl-tmp/Spann3R/logs/pipeline_state.json`。
+用于结束旧训练后重新采集、重新上传。队列模式默认开启，上传图片会按 session 保存到 `/root/autodl-tmp/pipeline_jobs/<job_id>/images`；关闭队列时才使用旧目录 `/root/autodl-tmp/input_images`。
+每次上传会同时追加 `upload_manifest.jsonl`，用于记录帧序号、session、文件大小和保存时间；训练流程状态写入 `/root/autodl-tmp/Spann3R/logs/pipeline_state.json`。
 
 ```bash
 cd /root/autodl-tmp/Spann3R
@@ -66,6 +66,7 @@ bash restart_backend_stack.sh
 
 默认处理方式：
 
+- 队列任务目录：`/root/autodl-tmp/pipeline_jobs`
 - 旧上传图片目录：`/root/autodl-tmp/input_images`
 - 归档目录：`/root/autodl-tmp/input_images_archive/restart_时间戳`
 - 默认保留最近 5 次重启归档
@@ -90,7 +91,19 @@ curl -s http://127.0.0.1:6008/api/progress
 curl -s http://127.0.0.1:6008/upload-proxy/healthz
 ```
 
-如果小程序仍显示不能上传，先确认 `phase` 是否仍为 `gaussian` 或 `completed`。只有回到 `idle`、`input`、`stopped` 或 `unknown` 且健康检查通过时，首页上传按钮才会放开。
+如果小程序仍显示不能上传，先确认 `curl -s http://127.0.0.1:6008/upload-proxy/healthz` 中的 `allow_upload`。队列模式下即使 `phase=gaussian/export/completed`，只要 `allow_upload=true`，首页上传按钮也应放开。
+
+查看排队任务：
+
+```bash
+curl -s http://127.0.0.1:6008/api/jobs
+```
+
+取消尚未开始的排队任务：
+
+```bash
+curl -X POST http://127.0.0.1:6008/api/jobs/<job_id>/cancel
+```
 
 ## 5. 单独启动服务
 

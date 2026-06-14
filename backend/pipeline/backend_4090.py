@@ -16,11 +16,14 @@ from pipeline.auto_gs import (
     prepare_target_dataset,
     run_command,
     run_conversion,
+    run_pipeline_once,
     run_spann3r,
     snapshot_uploaded_images,
     terminate_conflicting_ns_train,
+    wait_until_queued_job_stable,
     wait_until_upload_stable,
 )
+from pipeline.job_queue import mark_job, sanitize_job_id
 from pipeline.task_state import PipelineStateStore
 
 
@@ -33,6 +36,7 @@ def apply_default_env() -> None:
         "ARCHIVE_DIR": "/root/autodl-tmp/input_images_archive",
         "SCENE_NAME_PREFIX": "scene",
         "UPLOAD_SAVE_DIR": "/root/autodl-tmp/input_images",
+        "PIPELINE_JOB_ROOT": "/root/autodl-tmp/pipeline_jobs",
         "UPLOAD_PORT": "6006",
         "VIEWER_PORT": "6006",
         "SPANN3R_DEVICE": "cuda:0",
@@ -54,7 +58,8 @@ def apply_default_env() -> None:
         "GAUSSIAN_CROP_PADDING_RATIO": "0.03",
         "GAUSSIAN_REF_DISTANCE_SCALE": "4.0",
         "NS_EXPORT_EXTRA_ARGS": "",
-        "RUN_ONCE": "true",
+        "RUN_ONCE": "false",
+        "PIPELINE_QUEUE_ENABLED": "true",
         "CLEAR_TARGET_BEFORE_RUN": "true",
         "CLEAR_INPUT_AFTER_SNAPSHOT": "true",
         "ARCHIVE_INPUT": "false",
@@ -144,6 +149,32 @@ def main() -> None:
     state_store = PipelineStateStore()
     config.viewer_port = 6006
     upload_port = 6006
+    if config.queue_enabled:
+        print(f"📌 队列模式：6008 上传代理写入 {config.pipeline_job_root}，6006 固定留给 Viewer。")
+        while True:
+            try:
+                run_pipeline_once(config, state_store=state_store)
+                if config.run_once:
+                    break
+            except Exception as error:
+                failed_state = state_store.fail(error)
+                paths = failed_state.get("paths") if isinstance(failed_state.get("paths"), dict) else {}
+                queue_job_id = str(paths.get("queue_job_id") or "")
+                if queue_job_id:
+                    mark_job(
+                        config.pipeline_job_root,
+                        queue_job_id,
+                        "failed",
+                        "训练失败",
+                        error=str(error),
+                    )
+                print(f"\n❌ 队列任务异常: {error}")
+                if config.run_once:
+                    raise
+                print(f"⏱ {config.retry_interval_sec} 秒后继续监听下一个任务...")
+                time.sleep(config.retry_interval_sec)
+        return
+
     job_seed = f"{config.scene_name_prefix}_{time.strftime('%Y%m%d_%H%M%S')}"
     state_store.start_job(
         job_seed,
@@ -163,23 +194,32 @@ def main() -> None:
     )
 
     try:
-        print("📌 4090 单端口后端模式：上传与 Viewer 都使用 6006（分阶段复用）")
-        stale_pids = terminate_conflicting_ns_train(upload_port)
-        if stale_pids:
-            print(f"🧹 上传阶段前已停止占用端口 {upload_port} 的旧训练进程: {stale_pids}")
-        if not wait_for_port_state(upload_port, should_listen=False, timeout_sec=10.0):
-            raise RuntimeError(f"端口 {upload_port} 仍被占用，无法启动上传服务。")
-        upload_server = start_upload_server(upload_port, config.spann3r_root)
-
         print("🧭 阶段切换: 输入监测")
-        try:
-            images = wait_until_upload_stable(config, state_store=state_store)
-        finally:
-            stop_process(upload_server, "上传服务")
-        if not wait_for_port_state(upload_port, should_listen=False, timeout_sec=10.0):
-            raise RuntimeError(f"上传服务退出后端口 {upload_port} 仍被占用。")
+        queue_job = None
+        if config.queue_enabled:
+            print(f"📌 队列模式：6008 上传代理写入 {config.pipeline_job_root}，6006 固定留给 Viewer。")
+            images_source = wait_until_queued_job_stable(config, state_store=state_store)
+            queue_job, images = images_source
+        else:
+            print("📌 4090 单端口后端模式：上传与 Viewer 都使用 6006（分阶段复用）")
+            stale_pids = terminate_conflicting_ns_train(upload_port)
+            if stale_pids:
+                print(f"🧹 上传阶段前已停止占用端口 {upload_port} 的旧训练进程: {stale_pids}")
+            if not wait_for_port_state(upload_port, should_listen=False, timeout_sec=10.0):
+                raise RuntimeError(f"端口 {upload_port} 仍被占用，无法启动上传服务。")
+            upload_server = start_upload_server(upload_port, config.spann3r_root)
+            try:
+                images = wait_until_upload_stable(config, state_store=state_store)
+            finally:
+                stop_process(upload_server, "上传服务")
+            if not wait_for_port_state(upload_port, should_listen=False, timeout_sec=10.0):
+                raise RuntimeError(f"上传服务退出后端口 {upload_port} 仍被占用。")
 
         scene_name = build_scene_name(config, images)
+        if queue_job:
+            queued_scene = str(queue_job.get("scene_name") or "").strip()
+            if queued_scene:
+                scene_name = sanitize_job_id(queued_scene)
         state_store.update(
             job_id=scene_name,
             scene_name=scene_name,
@@ -187,6 +227,10 @@ def main() -> None:
             status="running",
             message="上传稳定，已创建场景",
             metrics={"uploaded_images": len(images)},
+            paths={
+                "job_input_dir": str(images[0].parent) if images else "",
+                "pipeline_job_root": str(config.pipeline_job_root),
+            },
         )
         scene_photo_dir = snapshot_uploaded_images(config, images, scene_name)
         state_store.update(paths={"scene_photo_dir": str(scene_photo_dir)})
@@ -265,7 +309,24 @@ def main() -> None:
             metrics={"step": config.ns_max_num_iterations, "percent": 100},
             artifacts=gaussian_artifacts,
         )
+        if queue_job:
+            mark_job(
+                config.pipeline_job_root,
+                str(queue_job.get("id") or queue_job.get("job_id") or scene_name),
+                "completed",
+                "训练与导出完成",
+                scene_name=scene_name,
+                extra={"artifacts": gaussian_artifacts, "scene_data_dir": str(scene_target_dir)},
+            )
     except Exception as error:
+        if "queue_job" in locals() and queue_job:
+            mark_job(
+                config.pipeline_job_root,
+                str(queue_job.get("id") or queue_job.get("job_id") or "unknown"),
+                "failed",
+                "训练失败",
+                error=str(error),
+            )
         state_store.fail(error)
         raise
 

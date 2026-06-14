@@ -8,10 +8,12 @@
 
 ## 1. 服务与端口
 
-默认部署（4090 单端口复用方案）：
+默认部署（AutoDL 双端口方案）：
 
-- `6006`：上传服务（阶段 A），训练开始后切换为 Viewer（阶段 C）
-- `6008`：管理台 UI、状态接口、下载接口
+- `6006`：Nerfstudio Viewer
+- `6008`：管理台 UI、状态接口、上传代理、下载接口
+
+说明：`services/upload_server.py` 仍可作为独立上传服务使用；当前推荐小程序统一走 `6008 /upload-proxy/upload`，队列模式下训练期间也能继续接收新上传任务。
 
 推荐启动：
 
@@ -34,7 +36,7 @@ bash restart_backend_stack.sh
 
 - 环境变量：`UPLOAD_AUTH_TOKEN`
 - 当该变量为空：上传接口无需 token
-- 当该变量非空：`POST /upload` 需要下列任一方式传 token
+- 当该变量非空：`POST /upload` 或 `POST /upload-proxy/upload` 需要下列任一方式传 token
   - 表单字段：`token`
   - Header：`X-Auth-Token`
 
@@ -50,9 +52,11 @@ bash restart_backend_stack.sh
   - `POST /api/pipeline/stop`
   - `POST /api/gaussian/export_latest`
 
-## 3. 上传服务 API（端口 6006）
+## 3. 独立上传服务 API（可选，端口 6006）
 
 Base URL 示例：`http://127.0.0.1:6006`
+
+当前小程序默认不直接调用该入口，而是调用 `6008 /upload-proxy/upload`。
 
 ### 3.1 GET `/`
 
@@ -67,7 +71,11 @@ Base URL 示例：`http://127.0.0.1:6006`
 ```json
 {
   "status": "ok",
-  "save_dir": "/root/autodl-tmp/input_images"
+  "save_dir": "/root/autodl-tmp/pipeline_jobs",
+  "legacy_save_dir": "/root/autodl-tmp/input_images",
+  "queue_enabled": true,
+  "queue_root": "/root/autodl-tmp/pipeline_jobs",
+  "allow_upload": true
 }
 ```
 
@@ -81,7 +89,10 @@ Base URL 示例：`http://127.0.0.1:6006`
 {
   "uploaded_files": 12,
   "uploaded_bytes": 3456789,
-  "save_dir": "/root/autodl-tmp/input_images",
+  "save_dir": "/root/autodl-tmp/pipeline_jobs",
+  "legacy_save_dir": "/root/autodl-tmp/input_images",
+  "queue_enabled": true,
+  "queue_root": "/root/autodl-tmp/pipeline_jobs",
   "max_file_size_mb": 25
 }
 ```
@@ -92,6 +103,8 @@ Base URL 示例：`http://127.0.0.1:6006`
 - 表单：
   - `frame_file`（必填，`jpg/jpeg/png`）
   - `token`（可选）
+  - `session_id`（可选，队列任务 ID；小程序会自动生成）
+  - `frame_index`（可选，帧序号）
 - Header：
   - `X-Auth-Token`（可选，与 `token` 二选一）
 
@@ -102,7 +115,9 @@ Base URL 示例：`http://127.0.0.1:6006`
   "code": 200,
   "msg": "上传成功",
   "filename": "20260418110000_123456_ab12cd34.jpg",
-  "bytes": 582311
+  "bytes": 582311,
+  "job_id": "wx_20260418110000_ab12cd34",
+  "queue_enabled": true
 }
 ```
 
@@ -147,12 +162,18 @@ Base URL 示例：`http://127.0.0.1:6008`
 
 #### GET `/api/status`
 
-返回当前流水线进程状态。
+返回当前流水线进程状态与队列摘要。
 
 ```json
 {
   "running": true,
-  "pid": 12345
+  "pid": 12345,
+  "queue_enabled": true,
+  "queue_length": 1,
+  "active_job": {
+    "id": "scene_20260418_112000",
+    "phase": "gaussian"
+  }
 }
 ```
 
@@ -173,7 +194,7 @@ Base URL 示例：`http://127.0.0.1:6008`
 
 解析训练日志后的聚合进度对象，常用字段：
 
-- `phase` / `stage`：`idle | input | spann3r | gaussian | completed | stopped`
+- `phase` / `stage`：`idle | input | spann3r | gaussian | export | completed | stopped | failed`
 - `step`、`loss`、`percent`
 - `uploaded_images`
 - `scene_name`
@@ -222,13 +243,23 @@ Base URL 示例：`http://127.0.0.1:6008`
 
 ### 4.5 上传目录与场景汇总
 
+#### GET `/upload-proxy/healthz`
+
+返回 6008 上传代理状态。队列模式下 `allow_upload=true` 表示即使当前处于训练或导出阶段，也可继续上传新任务。
+
+#### POST `/upload-proxy/upload`
+
+字段与独立上传服务一致，推荐前端使用该接口。
+
 #### GET `/api/uploads/summary`
 
-返回上传目录摘要：`watch_dir`、`count`、`latest_mtime`、`items`。
+返回上传目录摘要与队列摘要：`watch_dir`、`queue_root`、`queue_enabled`、`queue`、`jobs`、`items`。
 
 #### POST `/api/uploads/clear`
 
-删除上传目录图片。
+清理旧上传图片与未运行队列任务；运行中的任务不会被删除。
+
+响应示例：
 
 ```json
 {
@@ -236,6 +267,14 @@ Base URL 示例：`http://127.0.0.1:6008`
   "deleted": 128
 }
 ```
+
+#### GET `/api/jobs`
+
+返回队列任务列表。
+
+#### POST `/api/jobs/{job_id}/cancel`
+
+取消尚未开始的排队任务；运行中任务请使用 `POST /api/pipeline/stop`。
 
 #### GET `/api/scenes/summary`
 
