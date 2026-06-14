@@ -22,18 +22,17 @@ from pipeline.job_queue import (
 from pipeline.task_state import PipelineStateStore
 from services.pointcloud_index import (
     DEFAULT_POINTCLOUD_ROOTS,
+    build_latest_download_decision,
     build_pointclouds_summary_payload,
+    build_scene_download_decision,
     build_zip_archive_name,
     clear_pointcloud_files,
     discover_pointclouds as discover_pointcloud_items,
-    filter_pointclouds_by_processed,
     find_scene_gaussian_files as find_scene_gaussian_files_for_items,
     index_by_id as index_pointclouds_by_id,
     infer_pointcloud_variant as infer_pointcloud_variant_for_path,
     parse_pointcloud_roots,
     pick_preferred_pointcloud as pick_preferred_pointcloud_item,
-    select_latest_pointcloud,
-    select_scene_pointcloud,
     select_zip_pointclouds,
     under_allowed_roots as is_under_allowed_roots,
     write_pointcloud_zip,
@@ -1340,30 +1339,27 @@ async def files():
 
 @app.get("/download/latest")
 async def download_latest(prefer: str = "gaussian", processed: Optional[bool] = None):
-    items = filter_pointclouds_by_processed(discover_pointclouds(), processed)
-    if not items:
-        raise HTTPException(status_code=404, detail="未找到可下载点云")
-    prefer = (prefer or "gaussian").strip().lower()
-    chosen = select_latest_pointcloud(items, prefer=prefer)
-    if not chosen:
-        if prefer == "gaussian":
-            raise HTTPException(
-                status_code=404,
-                detail="未找到 Gaussian 训练点云（当前可能仍在训练中或尚未导出）",
-            )
-        raise HTTPException(status_code=404, detail=f"未找到类型为 {prefer} 的点云")
+    decision = build_latest_download_decision(discover_pointclouds(), prefer=prefer, processed=processed)
+    if not decision["ok"]:
+        raise HTTPException(status_code=int(decision["status_code"]), detail=str(decision["detail"]))
+    chosen = decision["item"]
     path = Path(chosen["path"])
     return FileResponse(path, filename=path.name, media_type="application/octet-stream")
 
 
 @app.get("/download/processed/latest")
 async def download_processed_latest(prefer: str = "gaussian"):
-    items = filter_pointclouds_by_processed(discover_pointclouds(), True)
-    if not items:
-        raise HTTPException(status_code=404, detail="未找到优化后的可下载点云")
-    chosen = select_latest_pointcloud(items, prefer=prefer, strict=False)
-    if not chosen:
-        raise HTTPException(status_code=404, detail=f"未找到类型为 {prefer} 的优化点云")
+    decision = build_latest_download_decision(
+        discover_pointclouds(),
+        prefer=prefer,
+        processed=True,
+        strict=False,
+        empty_detail="未找到优化后的可下载点云",
+        missing_label="优化点云",
+    )
+    if not decision["ok"]:
+        raise HTTPException(status_code=int(decision["status_code"]), detail=str(decision["detail"]))
+    chosen = decision["item"]
     path = Path(chosen["path"])
     return FileResponse(path, filename=path.name, media_type="application/octet-stream")
 
@@ -1374,19 +1370,15 @@ async def download_scene_pointcloud(
     prefer: str = "gaussian",
     processed: Optional[bool] = None,
 ):
-    scene_name = scene_name.strip()
-    if not scene_name:
-        raise HTTPException(status_code=400, detail="scene_name 不能为空")
-    items = [
-        item for item in filter_pointclouds_by_processed(discover_pointclouds(), processed)
-        if item.get("scene") == scene_name
-    ]
-    if not items:
-        raise HTTPException(status_code=404, detail=f"场景 {scene_name} 未找到可下载点云")
-    prefer = (prefer or "gaussian").strip().lower()
-    chosen = select_scene_pointcloud(items, scene_name, prefer=prefer)
-    if not chosen:
-        raise HTTPException(status_code=404, detail=f"场景 {scene_name} 未找到类型为 {prefer} 的点云")
+    decision = build_scene_download_decision(
+        discover_pointclouds(),
+        scene_name=scene_name,
+        prefer=prefer,
+        processed=processed,
+    )
+    if not decision["ok"]:
+        raise HTTPException(status_code=int(decision["status_code"]), detail=str(decision["detail"]))
+    chosen = decision["item"]
     path = Path(chosen["path"])
     return FileResponse(path, filename=path.name, media_type="application/octet-stream")
 

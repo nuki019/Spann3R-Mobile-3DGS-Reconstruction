@@ -7,11 +7,11 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 from services.pointcloud_index import (
     DEFAULT_POINTCLOUD_ROOTS,
+    build_latest_download_decision,
     discover_pointclouds as discover_pointcloud_items,
     index_by_id as index_pointclouds_by_id,
     infer_pointcloud_variant as infer_pointcloud_variant_for_path,
     parse_pointcloud_roots,
-    select_latest_pointcloud,
     under_allowed_roots as is_under_allowed_roots,
 )
 
@@ -90,18 +90,10 @@ async def files():
 
 @app.get("/download/latest")
 async def download_latest(prefer: str = "gaussian"):
-    items = discover_pointclouds()
-    if not items:
-        raise HTTPException(status_code=404, detail="未找到可下载点云")
-    prefer = (prefer or "gaussian").strip().lower()
-    chosen = select_latest_pointcloud(items, prefer=prefer)
-    if not chosen:
-        if prefer == "gaussian":
-            raise HTTPException(
-                status_code=404,
-                detail="未找到 Gaussian 训练点云（当前可能仍在训练中或尚未导出）",
-            )
-        raise HTTPException(status_code=404, detail=f"未找到类型为 {prefer} 的点云")
+    decision = build_latest_download_decision(discover_pointclouds(), prefer=prefer)
+    if not decision["ok"]:
+        raise HTTPException(status_code=int(decision["status_code"]), detail=str(decision["detail"]))
+    chosen = decision["item"]
     path = Path(chosen["path"])
     return FileResponse(path, filename=path.name, media_type="application/octet-stream")
 

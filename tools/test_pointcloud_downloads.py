@@ -13,7 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from services.pointcloud_index import (  # pylint: disable=wrong-import-position
+    build_latest_download_decision,
     build_pointclouds_summary_payload,
+    build_scene_download_decision,
     build_zip_archive_name,
     clear_pointcloud_files,
     discover_pointclouds,
@@ -171,6 +173,41 @@ def check_download_selection_helpers(items: list[dict[str, str]]) -> None:
     scene_downsampled = select_scene_pointcloud(items, "scene_new", prefer="downsampled")
     expect(scene_downsampled is not None and scene_downsampled["variant"] == "downsampled", "scene selection failed")
     expect(select_scene_pointcloud(items, "missing", prefer="any") is None, "missing scene should return none")
+
+    latest_decision = build_latest_download_decision(items, prefer="gaussian")
+    expect(latest_decision["ok"] is True, "latest download decision should succeed")
+    expect(latest_decision["item"]["name"] == "scene_new_gaussian_clipped.ply", "latest download decision changed")
+
+    empty_decision = build_latest_download_decision([], prefer="gaussian")
+    expect(empty_decision["ok"] is False and empty_decision["status_code"] == 404, "empty latest decision changed")
+    expect(empty_decision["detail"] == "未找到可下载点云", "empty latest detail changed")
+
+    missing_gaussian = build_latest_download_decision(old_scene, prefer="gaussian")
+    expect(missing_gaussian["ok"] is False, "missing gaussian decision should fail")
+    expect("Gaussian 训练点云" in missing_gaussian["detail"], "missing gaussian detail changed")
+
+    processed_fallback = build_latest_download_decision(
+        old_scene,
+        prefer="gaussian",
+        processed=True,
+        strict=False,
+        empty_detail="未找到优化后的可下载点云",
+        missing_label="优化点云",
+    )
+    expect(processed_fallback["ok"] is True, "processed latest decision should allow non-strict fallback")
+    expect(processed_fallback["item"]["variant"] == "train", "processed latest fallback changed")
+
+    scene_decision = build_scene_download_decision(items, "scene_new", prefer="downsampled")
+    expect(scene_decision["ok"] is True, "scene download decision should succeed")
+    expect(scene_decision["item"]["variant"] == "downsampled", "scene download decision changed")
+
+    empty_scene = build_scene_download_decision(items, "  ", prefer="any")
+    expect(empty_scene["status_code"] == 400, "empty scene should be a bad request")
+    expect(empty_scene["detail"] == "scene_name 不能为空", "empty scene detail changed")
+
+    missing_scene_variant = build_scene_download_decision(items, "scene_old", prefer="gaussian")
+    expect(missing_scene_variant["ok"] is False, "missing scene variant decision should fail")
+    expect(missing_scene_variant["detail"] == "场景 scene_old 未找到类型为 gaussian 的点云", "scene missing detail changed")
 
     zipped_latest = select_zip_pointclouds(items, variant="gaussian", latest_scene="scene_new")
     expect({item["name"] for item in zipped_latest} == {"point_cloud.ply", "scene_new_gaussian_clipped.ply"}, "zip latest gaussian selection changed")

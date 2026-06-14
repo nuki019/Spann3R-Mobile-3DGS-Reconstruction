@@ -243,6 +243,103 @@ def select_scene_pointcloud(
     return pick_preferred_pointcloud(candidates, prefer=prefer_key, strict=strict_value)
 
 
+def build_latest_download_decision(
+    items: List[Dict[str, str]],
+    prefer: str = "gaussian",
+    processed: Optional[bool] = None,
+    strict: Optional[bool] = None,
+    empty_detail: str = "未找到可下载点云",
+    missing_label: str = "点云",
+) -> Dict[str, object]:
+    candidates = filter_pointclouds_by_processed(items, processed)
+    prefer_key = normalize_prefer(prefer)
+    if not candidates:
+        return {
+            "ok": False,
+            "status_code": 404,
+            "detail": empty_detail,
+            "item": None,
+            "prefer": prefer_key,
+        }
+
+    chosen = select_latest_pointcloud(candidates, prefer=prefer_key, strict=strict)
+    if chosen:
+        return {
+            "ok": True,
+            "status_code": 200,
+            "detail": "",
+            "item": chosen,
+            "prefer": prefer_key,
+        }
+
+    if prefer_key == "gaussian" and processed is not True:
+        detail = "未找到 Gaussian 训练点云（当前可能仍在训练中或尚未导出）"
+    else:
+        detail = f"未找到类型为 {prefer_key} 的{missing_label}"
+    return {
+        "ok": False,
+        "status_code": 404,
+        "detail": detail,
+        "item": None,
+        "prefer": prefer_key,
+    }
+
+
+def build_scene_download_decision(
+    items: List[Dict[str, str]],
+    scene_name: str,
+    prefer: str = "gaussian",
+    processed: Optional[bool] = None,
+    strict: Optional[bool] = None,
+) -> Dict[str, object]:
+    scene_key = scene_name.strip()
+    prefer_key = normalize_prefer(prefer)
+    if not scene_key:
+        return {
+            "ok": False,
+            "status_code": 400,
+            "detail": "scene_name 不能为空",
+            "item": None,
+            "prefer": prefer_key,
+            "scene": "",
+        }
+
+    candidates = [
+        item
+        for item in filter_pointclouds_by_processed(items, processed)
+        if item.get("scene") == scene_key
+    ]
+    if not candidates:
+        return {
+            "ok": False,
+            "status_code": 404,
+            "detail": f"场景 {scene_key} 未找到可下载点云",
+            "item": None,
+            "prefer": prefer_key,
+            "scene": scene_key,
+        }
+
+    chosen = select_scene_pointcloud(candidates, scene_key, prefer=prefer_key, strict=strict)
+    if chosen:
+        return {
+            "ok": True,
+            "status_code": 200,
+            "detail": "",
+            "item": chosen,
+            "prefer": prefer_key,
+            "scene": scene_key,
+        }
+
+    return {
+        "ok": False,
+        "status_code": 404,
+        "detail": f"场景 {scene_key} 未找到类型为 {prefer_key} 的点云",
+        "item": None,
+        "prefer": prefer_key,
+        "scene": scene_key,
+    }
+
+
 def select_zip_pointclouds(
     items: List[Dict[str, str]],
     ids: str = "",
