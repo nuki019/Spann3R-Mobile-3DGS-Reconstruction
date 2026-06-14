@@ -1,10 +1,6 @@
 const app = getApp();
 const { BACKEND_LINKS, DASHBOARD_AUTH_TOKEN } = require("../../utils/oss_upload_utils");
 const previewState = require("../../utils/preview_state_model");
-const {
-  asText,
-  toObject
-} = previewState;
 
 function formatTime(ts) {
   const date = new Date(ts);
@@ -362,25 +358,25 @@ Page({
     });
 
     this.requestPost(apiUrl, {}, token).then((resData) => {
-      const payload = toObject(resData);
-      if (payload && payload.ok === false) {
-        throw new Error(payload.msg || payload.error || "接口返回失败");
+      const result = previewState.buildActionSuccessData(actionName, resData);
+      if (!result.ok) {
+        throw new Error(result.error);
       }
       this.setData({
-        actionMessage: actionName + "成功：" + asText(payload, 120)
+        actionMessage: result.actionMessage
       });
       wx.showToast({
-        title: actionName + "成功",
+        title: result.toastTitle,
         icon: "success"
       });
       this.refreshNow();
     }).catch((err) => {
-      const errMsg = err && err.message ? err.message : "未知错误";
+      const result = previewState.buildActionFailureData(actionName, err);
       this.setData({
-        actionMessage: actionName + "失败：" + errMsg
+        actionMessage: result.actionMessage
       });
       wx.showToast({
-        title: actionName + "失败",
+        title: result.toastTitle,
         icon: "none"
       });
     }).finally(() => {
@@ -426,25 +422,26 @@ Page({
           actionMessage: "取消任务中..."
         });
         this.requestPost(url, {}, token).then((resData) => {
-          const payload = toObject(resData);
-          if (payload && payload.ok === false) {
-            throw new Error(payload.msg || payload.error || "接口返回失败");
+          const result = previewState.buildActionSuccessData("取消任务", resData);
+          if (!result.ok) {
+            throw new Error(result.error);
           }
+          const successData = previewState.buildCancelSuccessData(jobId);
           this.setData({
-            actionMessage: "取消任务成功：" + jobId
+            actionMessage: successData.actionMessage
           });
           wx.showToast({
-            title: "已取消",
+            title: successData.toastTitle,
             icon: "success"
           });
           this.refreshNow();
         }).catch((err) => {
-          const errMsg = err && err.message ? err.message : "未知错误";
+          const result = previewState.buildCancelFailureData(err);
           this.setData({
-            actionMessage: "取消任务失败：" + errMsg
+            actionMessage: result.actionMessage
           });
           wx.showToast({
-            title: "取消失败",
+            title: result.toastTitle,
             icon: "none"
           });
         }).finally(() => {

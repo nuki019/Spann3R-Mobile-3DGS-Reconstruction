@@ -409,6 +409,44 @@ function buildSlowPollData(resultList, options) {
   };
 }
 
+function buildActionSuccessData(actionName, resData) {
+  const payload = toObject(resData);
+  if (payload && payload.ok === false) {
+    return {
+      ok: false,
+      error: payload.msg || payload.error || "接口返回失败"
+    };
+  }
+  return {
+    ok: true,
+    actionMessage: actionName + "成功：" + asText(payload, 120),
+    toastTitle: actionName + "成功"
+  };
+}
+
+function buildActionFailureData(actionName, error) {
+  const errMsg = error && error.message ? error.message : "未知错误";
+  return {
+    actionMessage: actionName + "失败：" + errMsg,
+    toastTitle: actionName + "失败"
+  };
+}
+
+function buildCancelSuccessData(jobId) {
+  return {
+    actionMessage: "取消任务成功：" + jobId,
+    toastTitle: "已取消"
+  };
+}
+
+function buildCancelFailureData(error) {
+  const errMsg = error && error.message ? error.message : "未知错误";
+  return {
+    actionMessage: "取消任务失败：" + errMsg,
+    toastTitle: "取消失败"
+  };
+}
+
 function parseStatus(data) {
   const obj = toObject(data);
   const pid = pickNumber(obj, ["pid"]);
@@ -639,7 +677,11 @@ function buildBackendPhases(progressData, options) {
 
 module.exports = {
   asText,
+  buildActionFailureData,
+  buildActionSuccessData,
   buildBackendPhases,
+  buildCancelFailureData,
+  buildCancelSuccessData,
   buildFastPollData,
   buildJobsData,
   buildLogsData,

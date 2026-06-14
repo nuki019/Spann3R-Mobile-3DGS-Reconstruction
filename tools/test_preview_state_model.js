@@ -441,6 +441,31 @@ function testMediumAndSlowPollData() {
   console.log("[OK] preview medium/slow poll data");
 }
 
+function testActionResultBuilders() {
+  assert.deepStrictEqual(model.buildActionSuccessData("启动流程", { ok: true, pid: 1234 }), {
+    ok: true,
+    actionMessage: '启动流程成功：{"ok":true,"pid":1234}',
+    toastTitle: "启动流程成功",
+  });
+  assert.deepStrictEqual(model.buildActionSuccessData("停止流程", { ok: false, error: "not running" }), {
+    ok: false,
+    error: "not running",
+  });
+  assert.deepStrictEqual(model.buildActionFailureData("导出Gaussian", new Error("export failed")), {
+    actionMessage: "导出Gaussian失败：export failed",
+    toastTitle: "导出Gaussian失败",
+  });
+  assert.deepStrictEqual(model.buildCancelSuccessData("job_a"), {
+    actionMessage: "取消任务成功：job_a",
+    toastTitle: "已取消",
+  });
+  assert.deepStrictEqual(model.buildCancelFailureData(new Error("cannot cancel")), {
+    actionMessage: "取消任务失败：cannot cancel",
+    toastTitle: "取消失败",
+  });
+  console.log("[OK] preview action result builders");
+}
+
 function testPhasePolicy() {
   ["idle", "input", "upload", "stopped", "unknown"].forEach((phase) => {
     assert.strictEqual(model.canUploadByPhase(phase), true);
@@ -467,6 +492,7 @@ function main() {
   testBackendPhaseBuilders();
   testFastPollData();
   testMediumAndSlowPollData();
+  testActionResultBuilders();
   testPhasePolicy();
   console.log("[OK] preview state model checks passed");
 }
