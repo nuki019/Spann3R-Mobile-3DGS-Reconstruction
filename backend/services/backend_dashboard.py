@@ -52,7 +52,12 @@ from services.asset_inventory import (
     list_images,
     read_latest_scene as read_latest_scene_for_root,
 )
-from services.progress_model import build_phase_status, extract_current_run_logs, parse_progress
+from services.progress_model import (
+    build_phase_status,
+    enrich_progress_response,
+    extract_current_run_logs,
+    parse_progress,
+)
 from services.upload_model import (
     build_upload_filename,
     resolve_upload_destination,
@@ -1133,35 +1138,13 @@ async def api_progress():
         progress["stage"] = phase_info["phase"]
         progress["sections"] = phase_info["sections"]
 
-    raw_points = progress.get("raw_points")
-    downsampled_points = progress.get("downsampled_points")
-    keep_ratio = progress.get("keep_ratio")
-    if raw_points and downsampled_points:
-        ratio_text = keep_ratio if keep_ratio is not None else "-"
-        progress["downsample_summary"] = (
-            f"下采样成果: raw={raw_points} | downsampled={downsampled_points} | 保留率={ratio_text}"
-        )
-    else:
-        progress["downsample_summary"] = "下采样成果: 待生成"
-
     gaussian_raw_file = progress.get("gaussian_raw_file")
     gaussian_clipped_file = progress.get("gaussian_clipped_file")
+    gaussian_files = {}
     if not (gaussian_raw_file and gaussian_clipped_file):
         scene_name = progress.get("scene_name") or read_latest_scene()
         gaussian_files = find_scene_gaussian_files(scene_name)
-        gaussian_raw_file = gaussian_raw_file or gaussian_files.get("raw")
-        gaussian_clipped_file = gaussian_clipped_file or gaussian_files.get("clipped")
-        progress["gaussian_raw_file"] = gaussian_raw_file
-        progress["gaussian_clipped_file"] = gaussian_clipped_file
-    if gaussian_raw_file and gaussian_clipped_file:
-        progress["gaussian_summary"] = (
-            f"Gaussian导出: raw={gaussian_raw_file} | clipped={gaussian_clipped_file}"
-        )
-    elif running and (progress.get("phase") == "gaussian"):
-        progress["gaussian_summary"] = "Gaussian导出: 训练中，等待导出完成"
-    else:
-        progress["gaussian_summary"] = "Gaussian导出: 待训练"
-    return progress
+    return enrich_progress_response(progress, running, gaussian_files)
 
 
 @app.get("/api/uploads/summary")

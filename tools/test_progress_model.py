@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from services.progress_model import (  # noqa: E402
     build_phase_status,
+    enrich_progress_response,
     extract_current_run_logs,
     parse_progress,
 )
@@ -108,10 +109,52 @@ def test_phase_inference() -> None:
     print("[OK] phase inference")
 
 
+def test_progress_response_enrichment() -> None:
+    progress = {
+        "raw_points": "1000",
+        "downsampled_points": "250",
+        "keep_ratio": "0.25",
+        "phase": "completed",
+    }
+    enriched = enrich_progress_response(
+        progress,
+        running=False,
+        gaussian_files={
+            "raw": "scene_gaussian_raw.ply",
+            "clipped": "scene_gaussian_clipped.ply",
+        },
+    )
+    assert_equal(
+        enriched["downsample_summary"],
+        "下采样成果: raw=1000 | downsampled=250 | 保留率=0.25",
+        "downsample summary changed",
+    )
+    assert_equal(enriched["gaussian_raw_file"], "scene_gaussian_raw.ply", "raw gaussian file fill changed")
+    assert_equal(
+        enriched["gaussian_clipped_file"],
+        "scene_gaussian_clipped.ply",
+        "clipped gaussian file fill changed",
+    )
+    assert_equal(
+        enriched["gaussian_summary"],
+        "Gaussian导出: raw=scene_gaussian_raw.ply | clipped=scene_gaussian_clipped.ply",
+        "gaussian summary changed",
+    )
+
+    running = enrich_progress_response({"phase": "gaussian"}, running=True)
+    assert_equal(running["downsample_summary"], "下采样成果: 待生成", "missing downsample summary changed")
+    assert_equal(running["gaussian_summary"], "Gaussian导出: 训练中，等待导出完成", "running gaussian summary changed")
+
+    pending = enrich_progress_response({}, running=False)
+    assert_equal(pending["gaussian_summary"], "Gaussian导出: 待训练", "pending gaussian summary changed")
+    print("[OK] progress response enrichment")
+
+
 def main() -> None:
     test_extract_current_run_logs()
     test_parse_progress()
     test_phase_inference()
+    test_progress_response_enrichment()
     print("[OK] progress model checks passed")
 
 

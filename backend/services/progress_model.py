@@ -158,3 +158,38 @@ def build_phase_status(
         },
     ]
     return {"phase": phase, "sections": sections}
+
+
+def enrich_progress_response(
+    progress: Dict[str, object],
+    running: bool,
+    gaussian_files: Optional[Dict[str, str]] = None,
+) -> Dict[str, object]:
+    raw_points = progress.get("raw_points")
+    downsampled_points = progress.get("downsampled_points")
+    keep_ratio = progress.get("keep_ratio")
+    if raw_points and downsampled_points:
+        ratio_text = keep_ratio if keep_ratio is not None else "-"
+        progress["downsample_summary"] = (
+            f"下采样成果: raw={raw_points} | downsampled={downsampled_points} | 保留率={ratio_text}"
+        )
+    else:
+        progress["downsample_summary"] = "下采样成果: 待生成"
+
+    gaussian_raw_file = progress.get("gaussian_raw_file")
+    gaussian_clipped_file = progress.get("gaussian_clipped_file")
+    gaussian_files = gaussian_files or {}
+    if not (gaussian_raw_file and gaussian_clipped_file):
+        gaussian_raw_file = gaussian_raw_file or gaussian_files.get("raw")
+        gaussian_clipped_file = gaussian_clipped_file or gaussian_files.get("clipped")
+        progress["gaussian_raw_file"] = gaussian_raw_file
+        progress["gaussian_clipped_file"] = gaussian_clipped_file
+    if gaussian_raw_file and gaussian_clipped_file:
+        progress["gaussian_summary"] = (
+            f"Gaussian导出: raw={gaussian_raw_file} | clipped={gaussian_clipped_file}"
+        )
+    elif running and (progress.get("phase") == "gaussian"):
+        progress["gaussian_summary"] = "Gaussian导出: 训练中，等待导出完成"
+    else:
+        progress["gaussian_summary"] = "Gaussian导出: 待训练"
+    return progress
