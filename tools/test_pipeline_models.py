@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from pipeline.job_queue import (  # noqa: E402
+    build_cancel_job_decision,
     job_dir,
     job_images_dir,
     list_jobs,
@@ -133,10 +134,18 @@ def test_job_queue_model() -> None:
 
         assert_equal(len(list_runnable_jobs(queue_root)), 1, "queued job should be runnable")
         assert_equal(summarize_jobs(queue_root)["queued"], 1, "summary should count queued jobs")
+        cancel_queued = build_cancel_job_decision(list_jobs(queue_root), "wx/session 01")
+        assert_equal(cancel_queued["job_id"], job_id, "cancel decision should sanitize job id")
+        assert_true(cancel_queued["exists"], "queued job should exist for cancellation")
+        assert_true(cancel_queued["cancellable"], "queued job should be cancellable")
 
         running = mark_job(queue_root, job_id, "running", "training started", scene_name="scene_a")
         assert_equal(running["status"], "running", "mark_job should update status")
         assert_equal(read_job(queue_root, job_id)["scene_name"], "scene_a", "job should store scene name")
+        cancel_running = build_cancel_job_decision(list_jobs(queue_root), job_id)
+        assert_true(cancel_running["exists"], "running job should exist for cancellation decision")
+        assert_true(not cancel_running["cancellable"], "running job should not be cancellable via queue cancel")
+        assert_equal(cancel_running["status"], "running", "cancel decision should preserve status")
 
         (images_dir / "frame_001.jpg").write_bytes(b"late-jpeg")
         late = record_uploaded_frame(
@@ -193,6 +202,10 @@ def test_job_queue_model() -> None:
         assert_true(other_id not in runnable_ids, "stopped job must not be runnable")
         summary = summarize_jobs(queue_root)
         assert_equal(summary["stopped"], 1, "summary should count stopped jobs separately")
+        cancel_missing = build_cancel_job_decision(list_jobs(queue_root), "missing/job")
+        assert_equal(cancel_missing["job_id"], "missing_job", "missing cancel decision should sanitize id")
+        assert_true(not cancel_missing["exists"], "missing job should not exist")
+        assert_true(not cancel_missing["cancellable"], "missing job must not be cancellable")
 
         jobs = list_jobs(queue_root)
         assert_true(all(job_dir(queue_root, str(job["id"])).exists() for job in jobs), "job dirs should exist")

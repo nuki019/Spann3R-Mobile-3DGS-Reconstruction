@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from pipeline.job_policy import (
+    can_cancel_job_status,
     is_runnable_job_status,
     next_status_after_upload,
     summarize_job_statuses,
@@ -141,6 +142,19 @@ def list_jobs(queue_root: Path, limit: int = 200) -> List[Dict[str, object]]:
 
 def list_runnable_jobs(queue_root: Path) -> List[Dict[str, object]]:
     return [job for job in list_jobs(queue_root) if is_runnable_job_status(job.get("status"))]
+
+
+def build_cancel_job_decision(jobs: Iterable[Dict[str, object]], raw_job_id: str) -> Dict[str, object]:
+    safe_id = sanitize_job_id(raw_job_id)
+    job = next((item for item in jobs if item.get("id") == safe_id), None)
+    status = job.get("status") if job else ""
+    return {
+        "job_id": safe_id,
+        "job": job or {},
+        "exists": job is not None,
+        "cancellable": bool(job and can_cancel_job_status(status)),
+        "status": str(status or ""),
+    }
 
 
 def mark_job(

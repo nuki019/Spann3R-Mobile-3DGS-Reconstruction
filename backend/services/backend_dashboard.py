@@ -14,12 +14,12 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from pipeline.job_queue import (
+    build_cancel_job_decision,
     list_jobs,
     record_uploaded_frame,
-    sanitize_job_id,
     summarize_jobs,
 )
-from pipeline.job_policy import can_cancel_job_status, can_upload_by_phase
+from pipeline.job_policy import can_upload_by_phase
 from pipeline.task_state import PipelineStateStore
 from services.pointcloud_index import (
     DEFAULT_POINTCLOUD_ROOTS,
@@ -1199,11 +1199,11 @@ async def api_jobs():
 @app.post("/api/jobs/{job_id}/cancel")
 async def api_job_cancel(job_id: str, _: None = Depends(require_dashboard_token)):
     queue_root = get_config_path("PIPELINE_JOB_ROOT", PIPELINE_JOB_ROOT)
-    safe_id = sanitize_job_id(job_id)
-    job = next((item for item in list_jobs(queue_root, limit=1000) if item.get("id") == safe_id), None)
-    if not job:
+    decision = build_cancel_job_decision(list_jobs(queue_root, limit=1000), job_id)
+    safe_id = str(decision["job_id"])
+    if not decision["exists"]:
         raise HTTPException(status_code=404, detail=f"任务不存在: {safe_id}")
-    if not can_cancel_job_status(job.get("status")):
+    if not decision["cancellable"]:
         raise HTTPException(status_code=409, detail="运行中任务请使用停止训练")
     updated = mark_job(queue_root, safe_id, "stopped", "用户取消排队任务")
     return {"ok": True, "job": updated}
