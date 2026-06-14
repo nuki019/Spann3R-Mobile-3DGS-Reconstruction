@@ -19,6 +19,7 @@ PYTHON_FILES = [
     ROOT / "backend" / "services" / "cleanup_model.py",
     ROOT / "backend" / "services" / "config_model.py",
     ROOT / "backend" / "services" / "dashboard_state_model.py",
+    ROOT / "backend" / "services" / "gaussian_export_model.py",
     ROOT / "backend" / "services" / "pointcloud_download_server.py",
     ROOT / "backend" / "services" / "pointcloud_index.py",
     ROOT / "backend" / "services" / "progress_model.py",
@@ -39,6 +40,7 @@ PYTHON_FILES = [
     ROOT / "tools" / "test_frontend_config.py",
     ROOT / "tools" / "test_config_model.py",
     ROOT / "tools" / "test_dashboard_state_model.py",
+    ROOT / "tools" / "test_gaussian_export_model.py",
     ROOT / "tools" / "test_command_model.py",
     ROOT / "tools" / "test_pipeline_models.py",
     ROOT / "tools" / "test_pointcloud_downloads.py",
@@ -137,6 +139,7 @@ def check_required_text() -> None:
         "test_frontend_config.py",
         "test_config_model.py",
         "test_dashboard_state_model.py",
+        "test_gaussian_export_model.py",
         "test_preview_state_model.js",
         "test_command_model.py",
         "test_pipeline_models.py",
@@ -335,6 +338,19 @@ def check_dashboard_state_model_tests() -> None:
     print(result.stdout.rstrip())
 
 
+def check_gaussian_export_model_tests() -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "test_gaussian_export_model.py")],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        fail(f"gaussian export model tests failed\n{result.stdout}\n{result.stderr}")
+    print(result.stdout.rstrip())
+
+
 def check_preview_state_model_tests() -> None:
     result = subprocess.run(
         ["node", str(ROOT / "tools" / "test_preview_state_model.js")],
@@ -480,6 +496,7 @@ def main() -> None:
     check_frontend_config_tests()
     check_config_model_tests()
     check_dashboard_state_model_tests()
+    check_gaussian_export_model_tests()
     check_preview_state_model_tests()
     check_command_model_tests()
     check_upload_model_tests()

@@ -43,6 +43,7 @@ from services.config_model import (
 )
 from services.cleanup_model import clear_non_running_jobs, clear_uploaded_inputs
 from services.dashboard_state_model import active_job_from_state, merge_state_progress, normalize_state_phase
+from services.gaussian_export_model import apply_gaussian_export_config, latest_scene_dir
 from services.asset_inventory import (
     discover_archive_dirs as discover_archive_dirs_for_root,
     discover_photo_scenes as discover_photo_scenes_for_root,
@@ -1273,23 +1274,14 @@ async def api_export_latest_gaussian(_: None = Depends(require_dashboard_token))
 
     values = read_env_file()
 
-    def as_bool(key: str, default: bool) -> bool:
-        value = values.get(key, "").strip().lower()
-        if not value:
-            return default
-        return value in {"1", "true", "yes", "y", "on"}
-
-    config = PipelineConfig.from_env()
-    config.spann3r_root = ROOT_DIR
-    config.scene_data_root = Path(values.get("SCENE_DATA_ROOT", str(SCENE_DATA_ROOT))).resolve()
-    config.ns_output_root = Path(values.get("NS_OUTPUT_ROOT", str(ROOT_DIR / "outputs"))).resolve()
-    config.ns_export_after_train = as_bool("NS_EXPORT_AFTER_TRAIN", True)
-    config.gaussian_export_subdir = values.get("GAUSSIAN_EXPORT_SUBDIR", "gaussian_export").strip() or "gaussian_export"
-    config.gaussian_crop_padding_ratio = float(values.get("GAUSSIAN_CROP_PADDING_RATIO", "0.03"))
-    config.gaussian_ref_distance_scale = float(values.get("GAUSSIAN_REF_DISTANCE_SCALE", "4.0"))
-    config.ns_export_extra_args = values.get("NS_EXPORT_EXTRA_ARGS", "").strip()
-
-    scene_dir = config.scene_data_root / latest_scene
+    config = apply_gaussian_export_config(
+        PipelineConfig.from_env(),
+        values,
+        ROOT_DIR,
+        SCENE_DATA_ROOT,
+        ROOT_DIR / "outputs",
+    )
+    scene_dir = latest_scene_dir(config.scene_data_root, latest_scene)
     if not scene_dir.exists():
         raise HTTPException(status_code=404, detail=f"场景目录不存在: {scene_dir}")
 
