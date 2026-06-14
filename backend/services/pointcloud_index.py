@@ -264,9 +264,17 @@ def select_zip_pointclouds(
     return filter_pointclouds_by_processed(selected, processed)
 
 
+def safe_archive_component(value: str, fallback: str) -> str:
+    cleaned = "".join(
+        char if char.isalnum() or char in {"-", "_", "."} else "_"
+        for char in str(value or "").strip()
+    ).strip("._-")
+    return cleaned or fallback
+
+
 def build_zip_archive_name(latest_scene: str, variant: str) -> str:
-    archive_scene = latest_scene or "pointclouds"
-    archive_variant = normalize_prefer(variant, default="any")
+    archive_scene = safe_archive_component(latest_scene, "pointclouds")
+    archive_variant = safe_archive_component(normalize_prefer(variant, default="any"), "any")
     return f"{archive_scene}_{archive_variant}.zip"
 
 

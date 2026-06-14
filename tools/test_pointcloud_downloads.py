@@ -186,6 +186,7 @@ def check_download_selection_helpers(items: list[dict[str, str]]) -> None:
     zipped_ids = select_zip_pointclouds(items, ids=wanted_ids, variant="raw", processed=True, latest_scene="scene_new")
     expect({item["id"] for item in zipped_ids} == {items[0]["id"], items[-1]["id"]}, "zip ids selection changed")
     expect(build_zip_archive_name("scene_new", " Gaussian ") == "scene_new_gaussian.zip", "zip archive name changed")
+    expect(build_zip_archive_name(" scene/new 01 ", "???") == "scene_new_01_any.zip", "zip archive name should be safe")
     expect(build_zip_archive_name("", "") == "pointclouds_any.zip", "default zip archive name changed")
     print("[OK] pointcloud download selection helpers")
 
