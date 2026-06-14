@@ -12,6 +12,28 @@ function testPhaseParsingAndText() {
   console.log("[OK] capture phase parsing");
 }
 
+function testHealthResponseParsing() {
+  assert.strictEqual(model.isHttpOkResponse({ statusCode: 200 }), true);
+  assert.strictEqual(model.isHttpOkResponse({ statusCode: 404 }), false);
+  assert.strictEqual(
+    model.parseDashboardHealthResponse({ statusCode: 200, data: { status: "ok" } }),
+    true,
+  );
+  assert.strictEqual(
+    model.parseDashboardHealthResponse({ statusCode: 200, data: { status: "starting" } }),
+    false,
+  );
+  assert.deepStrictEqual(
+    model.parseUploadProxyHealthResponse({
+      statusCode: 200,
+      data: { status: "ok", allow_upload: true, queue_enabled: true, phase: "gaussian" },
+    }),
+    { ok: true, allowUpload: true, queueEnabled: true, phase: "gaussian" },
+  );
+  assert.deepStrictEqual(model.parseUploadProxyHealthResponse({ statusCode: 404 }), { ok: false });
+  console.log("[OK] capture health response parsing");
+}
+
 function testUploadPolicy() {
   ["idle", "input", "upload", "stopped", "unknown"].forEach((phase) => {
     assert.strictEqual(model.canUploadByPhase(phase), true);
@@ -68,11 +90,43 @@ function testPhaseState() {
   console.log("[OK] capture phase state");
 }
 
+function testRefreshPhaseResult() {
+  assert.deepStrictEqual(
+    model.buildRefreshPhaseResult("gaussian", true, {
+      ok: true,
+      allowUpload: true,
+      queueEnabled: true,
+    }),
+    {
+      phase: "gaussian",
+      uploadHealthy: true,
+      dashboardHealthy: true,
+      uploadAllow: true,
+      queueEnabled: true,
+      phaseAllowUpload: true,
+    },
+  );
+  assert.deepStrictEqual(
+    model.buildRefreshPhaseResult("", false, { ok: false }),
+    {
+      phase: "unknown",
+      uploadHealthy: false,
+      dashboardHealthy: false,
+      uploadAllow: undefined,
+      queueEnabled: false,
+      phaseAllowUpload: false,
+    },
+  );
+  console.log("[OK] capture refresh phase result");
+}
+
 function main() {
   testPhaseParsingAndText();
+  testHealthResponseParsing();
   testUploadPolicy();
   testStatusLabels();
   testPhaseState();
+  testRefreshPhaseResult();
   console.log("[OK] capture state model checks passed");
 }
 

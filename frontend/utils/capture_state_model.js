@@ -21,6 +21,49 @@ function getPhaseFromProgress(progressData) {
   return phase || "unknown";
 }
 
+function isHttpOkResponse(res) {
+  const statusCode = res && res.statusCode ? res.statusCode : 0;
+  return statusCode >= 200 && statusCode < 300;
+}
+
+function parseDashboardHealthResponse(res) {
+  if (!isHttpOkResponse(res)) {
+    return false;
+  }
+  const payload = res && res.data ? res.data : null;
+  return Boolean(payload && typeof payload === "object" && payload.status === "ok");
+}
+
+function parseUploadProxyHealthResponse(res) {
+  if (!isHttpOkResponse(res)) {
+    return { ok: false };
+  }
+  const payload = res && res.data ? res.data : null;
+  return {
+    ok: Boolean(payload && typeof payload === "object" && payload.status === "ok"),
+    allowUpload: payload && typeof payload.allow_upload === "boolean" ? payload.allow_upload : undefined,
+    queueEnabled: Boolean(payload && payload.queue_enabled),
+    phase: payload && typeof payload.phase === "string" ? payload.phase : ""
+  };
+}
+
+function buildRefreshPhaseResult(phase, dashboardHealthy, uploadState) {
+  const normalizedPhase = phase || "unknown";
+  const uploadInfo = uploadState || { ok: false };
+  const uploadHealthy = Boolean(uploadInfo && uploadInfo.ok);
+  const uploadAllow = uploadInfo && typeof uploadInfo.allowUpload === "boolean" ? uploadInfo.allowUpload : undefined;
+  const queueEnabled = Boolean(uploadInfo && uploadInfo.queueEnabled);
+  const dashboardOk = Boolean(dashboardHealthy);
+  return {
+    phase: normalizedPhase,
+    uploadHealthy: uploadHealthy,
+    dashboardHealthy: dashboardOk,
+    uploadAllow: uploadAllow,
+    queueEnabled: queueEnabled,
+    phaseAllowUpload: isUploadAllowed(normalizedPhase, uploadHealthy, dashboardOk, uploadAllow)
+  };
+}
+
 function getPhaseText(phase) {
   const phaseMap = {
     input: "input（可上传）",
@@ -147,6 +190,7 @@ function buildPhaseState(phase, uploadHealthy, dashboardHealthy, uploadAllow, qu
 }
 
 module.exports = {
+  buildRefreshPhaseResult,
   buildPhaseState,
   canUploadByPhase,
   getBackendStatusClass,
@@ -155,5 +199,8 @@ module.exports = {
   getPhaseHint,
   getPhaseText,
   getUploadBlockLabel,
-  isUploadAllowed
+  isHttpOkResponse,
+  isUploadAllowed,
+  parseDashboardHealthResponse,
+  parseUploadProxyHealthResponse
 };

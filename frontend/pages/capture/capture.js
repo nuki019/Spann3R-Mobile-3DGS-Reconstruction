@@ -181,14 +181,7 @@ Page({
         method: "GET",
         timeout: 5000,
         success: function(res) {
-          var statusCode = res && res.statusCode ? res.statusCode : 0;
-          if (statusCode < 200 || statusCode >= 300) {
-            resolve(false);
-            return;
-          }
-          var payload = res && res.data ? res.data : null;
-          var ok = Boolean(payload && typeof payload === "object" && payload.status === "ok");
-          resolve(ok);
+          resolve(captureState.parseDashboardHealthResponse(res));
         },
         fail: function(err) {
           reject(err);
@@ -204,19 +197,7 @@ Page({
         method: "GET",
         timeout: 5000,
         success: function(res) {
-          var statusCode = res && res.statusCode ? res.statusCode : 0;
-          if (statusCode < 200 || statusCode >= 300) {
-            resolve(false);
-            return;
-          }
-          var payload = res && res.data ? res.data : null;
-          var ok = Boolean(payload && typeof payload === "object" && payload.status === "ok");
-          resolve({
-            ok: ok,
-            allowUpload: payload && typeof payload.allow_upload === "boolean" ? payload.allow_upload : undefined,
-            queueEnabled: Boolean(payload && payload.queue_enabled),
-            phase: payload && typeof payload.phase === "string" ? payload.phase : ""
-          });
+          resolve(captureState.parseUploadProxyHealthResponse(res));
         },
         fail: function(err) {
           reject(err);
@@ -235,18 +216,15 @@ Page({
       var phase = resultList[0].status === "fulfilled" ? resultList[0].value : "unknown";
       var dashboardHealthy = resultList[1].status === "fulfilled" ? resultList[1].value : false;
       var uploadState = resultList[2].status === "fulfilled" ? resultList[2].value : { ok: false };
-      var uploadHealthy = Boolean(uploadState && uploadState.ok);
-      var uploadAllow = uploadState && typeof uploadState.allowUpload === "boolean" ? uploadState.allowUpload : undefined;
-      var queueEnabled = Boolean(uploadState && uploadState.queueEnabled);
-      that.applyPhaseState(phase, uploadHealthy, dashboardHealthy, uploadAllow, queueEnabled);
-      return {
-        phase: phase,
-        uploadHealthy: uploadHealthy,
-        dashboardHealthy: dashboardHealthy,
-        uploadAllow: uploadAllow,
-        queueEnabled: queueEnabled,
-        phaseAllowUpload: that.isUploadAllowed(phase, uploadHealthy, dashboardHealthy, uploadAllow)
-      };
+      var phaseResult = captureState.buildRefreshPhaseResult(phase, dashboardHealthy, uploadState);
+      that.applyPhaseState(
+        phaseResult.phase,
+        phaseResult.uploadHealthy,
+        phaseResult.dashboardHealthy,
+        phaseResult.uploadAllow,
+        phaseResult.queueEnabled
+      );
+      return phaseResult;
     }).catch(function() {
       if (!isSilent) {
         that.applyPhaseState("unknown", false, false);
