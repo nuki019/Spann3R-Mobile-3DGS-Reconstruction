@@ -1,5 +1,4 @@
 import os
-import hashlib
 import shlex
 import shutil
 import subprocess
@@ -20,9 +19,17 @@ from pipeline.job_queue import (
     mark_job,
     sanitize_job_id,
 )
+from pipeline.storage_model import (
+    build_image_fingerprint as build_storage_image_fingerprint,
+    build_scene_name as build_storage_scene_name,
+    cleanup_upload_inputs,
+    list_images as list_storage_images,
+    mark_latest_scene,
+    prune_child_dirs,
+    sanitize_scene_name,
+    snapshot_images,
+)
 from pipeline.task_state import PipelineStateStore
-
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
 
 
 def _get_env_bool(name: str, default: bool) -> bool:
@@ -128,35 +135,23 @@ def run_command(command: Sequence[str], cwd: Optional[Path] = None) -> None:
 
 
 def list_images(directory: Path) -> List[Path]:
-    images = [p for p in directory.iterdir() if p.is_file() and p.suffix in IMAGE_EXTENSIONS]
-    images.sort(key=lambda p: (p.stat().st_mtime_ns, p.name))
-    return images
+    return list_storage_images(directory)
 
 
 def build_image_fingerprint(images: Iterable[Path]) -> Tuple[Tuple[str, int, int], ...]:
-    return tuple((path.name, path.stat().st_size, path.stat().st_mtime_ns) for path in images)
+    return build_storage_image_fingerprint(images)
 
 
 def sanitize_name(raw: str) -> str:
-    cleaned = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in raw.strip())
-    cleaned = cleaned.strip("_")
-    return cleaned or "scene"
+    return sanitize_scene_name(raw)
 
 
 def build_scene_name(config: PipelineConfig, images: Iterable[Path]) -> str:
-    prefix = sanitize_name(config.scene_name_prefix)
-    fingerprint = build_image_fingerprint(images)
-    digest = hashlib.sha1(repr(fingerprint).encode("utf-8")).hexdigest()[:8]
-    return f"{prefix}_{time.strftime('%Y%m%d_%H%M%S')}_{digest}"
+    return build_storage_scene_name(config.scene_name_prefix, images)
 
 
 def snapshot_uploaded_images(config: PipelineConfig, images: List[Path], scene_name: str) -> Path:
-    scene_photo_dir = config.test_photo_root / scene_name
-    if scene_photo_dir.exists():
-        shutil.rmtree(scene_photo_dir)
-    scene_photo_dir.mkdir(parents=True, exist_ok=True)
-    for image_path in images:
-        shutil.copy2(image_path, scene_photo_dir / image_path.name)
+    scene_photo_dir = snapshot_images(images, config.test_photo_root, scene_name)
     print(f"🗂️ 已保留测试照片集: {scene_photo_dir} (共 {len(images)} 张)")
     return scene_photo_dir
 
@@ -472,52 +467,18 @@ def copy_point_clouds(scene_output_dir: Path, target_data_dir: Path, scene_name:
     return raw_name, downsampled_name, train_name
 
 
-def mark_latest_scene(scene_data_root: Path, scene_name: str) -> None:
-    marker = scene_data_root / "LATEST_SCENE.txt"
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(scene_name + "\n", encoding="utf-8")
-
-
 def archive_input_images(config: PipelineConfig) -> Dict[str, object]:
-    images = list_images(config.watch_dir)
-    part_files = sorted(config.watch_dir.glob("*.part")) if config.watch_dir.exists() else []
-    manifest_file = config.watch_dir / "_upload_manifest.jsonl"
-    if not images and not part_files and not manifest_file.exists():
-        return {"mode": "empty", "deleted": 0, "archived": 0, "archive_dir": ""}
-
-    if not config.archive_input:
-        if not config.clear_input_after_snapshot:
-            return {"mode": "keep", "deleted": 0, "archived": 0, "archive_dir": ""}
-        deleted = 0
-        for image_path in images:
-            image_path.unlink(missing_ok=True)
-            deleted += 1
-        for part_path in part_files:
-            part_path.unlink(missing_ok=True)
-        manifest_file.unlink(missing_ok=True)
-        print(f"🧹 已清理上传目录: {config.watch_dir} (删除 {deleted} 张图片)")
-        return {"mode": "delete", "deleted": deleted, "archived": 0, "archive_dir": ""}
-
-    archive_subdir = config.archive_dir / time.strftime("%Y%m%d_%H%M%S")
-    archive_subdir.mkdir(parents=True, exist_ok=True)
-    for image_path in images:
-        shutil.move(str(image_path), archive_subdir / image_path.name)
-    if manifest_file.exists():
-        shutil.move(str(manifest_file), archive_subdir / manifest_file.name)
-    print(f"🗄️ 已归档原始图片到: {archive_subdir}")
-    return {"mode": "archive", "deleted": 0, "archived": len(images), "archive_dir": str(archive_subdir)}
-
-
-def prune_child_dirs(root: Path, keep: int, protected_name: str = "") -> int:
-    if keep <= 0 or not root.exists():
-        return 0
-    candidates = [item for item in root.iterdir() if item.is_dir() and item.name != protected_name]
-    candidates.sort(key=lambda item: item.stat().st_mtime_ns, reverse=True)
-    deleted = 0
-    for old_dir in candidates[max(keep - 1, 0):]:
-        shutil.rmtree(old_dir, ignore_errors=True)
-        deleted += 1
-    return deleted
+    summary = cleanup_upload_inputs(
+        config.watch_dir,
+        config.archive_dir,
+        archive_input=config.archive_input,
+        clear_input_after_snapshot=config.clear_input_after_snapshot,
+    )
+    if summary.get("mode") == "delete":
+        print(f"已清理上传目录 {config.watch_dir} (删除 {summary.get('deleted')} 张图片)")
+    elif summary.get("mode") == "archive":
+        print(f"已归档原始图片到: {summary.get('archive_dir')}")
+    return summary
 
 
 def prune_old_assets(config: PipelineConfig, current_scene: str) -> None:
