@@ -43,6 +43,8 @@ JS_FILES = [
     ROOT / "frontend" / "pages" / "capture" / "capture.js",
     ROOT / "frontend" / "pages" / "preview" / "preview.js",
     ROOT / "frontend" / "utils" / "oss_upload_utils.js",
+    ROOT / "frontend" / "utils" / "preview_state_model.js",
+    ROOT / "tools" / "test_preview_state_model.js",
 ]
 
 TEXT_FILES_TO_SCAN = [
@@ -123,6 +125,7 @@ def check_required_text() -> None:
         "api_contract_check.py",
         "autodl_preflight_check.py",
         "test_frontend_config.py",
+        "test_preview_state_model.js",
         "test_command_model.py",
         "test_pipeline_models.py",
         "test_pointcloud_downloads.py",
@@ -268,6 +271,19 @@ def check_frontend_config_tests() -> None:
     print(result.stdout.rstrip())
 
 
+def check_preview_state_model_tests() -> None:
+    result = subprocess.run(
+        ["node", str(ROOT / "tools" / "test_preview_state_model.js")],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        fail(f"preview state model tests failed\n{result.stdout}\n{result.stderr}")
+    print(result.stdout.rstrip())
+
+
 def check_command_model_tests() -> None:
     result = subprocess.run(
         [sys.executable, str(ROOT / "tools" / "test_command_model.py")],
@@ -396,6 +412,7 @@ def main() -> None:
     check_frontend_capture_copy()
     check_api_contract_script()
     check_frontend_config_tests()
+    check_preview_state_model_tests()
     check_command_model_tests()
     check_upload_model_tests()
     check_progress_model_tests()
