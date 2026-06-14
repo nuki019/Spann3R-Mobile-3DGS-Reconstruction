@@ -20,6 +20,7 @@ PYTHON_FILES = [
     ROOT / "backend" / "services" / "progress_model.py",
     ROOT / "backend" / "services" / "upload_model.py",
     ROOT / "backend" / "services" / "upload_server.py",
+    ROOT / "backend" / "pipeline" / "command_model.py",
     ROOT / "backend" / "pipeline" / "job_queue.py",
     ROOT / "backend" / "pipeline" / "storage_model.py",
     ROOT / "backend" / "pipeline" / "task_state.py",
@@ -29,6 +30,7 @@ PYTHON_FILES = [
     ROOT / "tools" / "api_contract_check.py",
     ROOT / "tools" / "autodl_preflight_check.py",
     ROOT / "tools" / "test_frontend_config.py",
+    ROOT / "tools" / "test_command_model.py",
     ROOT / "tools" / "test_pipeline_models.py",
     ROOT / "tools" / "test_pointcloud_downloads.py",
     ROOT / "tools" / "test_progress_model.py",
@@ -120,6 +122,7 @@ def check_required_text() -> None:
         "api_contract_check.py",
         "autodl_preflight_check.py",
         "test_frontend_config.py",
+        "test_command_model.py",
         "test_pipeline_models.py",
         "test_pointcloud_downloads.py",
         "test_progress_model.py",
@@ -264,6 +267,19 @@ def check_frontend_config_tests() -> None:
     print(result.stdout.rstrip())
 
 
+def check_command_model_tests() -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "test_command_model.py")],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        fail(f"command model tests failed\n{result.stdout}\n{result.stderr}")
+    print(result.stdout.rstrip())
+
+
 def check_upload_model_tests() -> None:
     result = subprocess.run(
         [sys.executable, str(ROOT / "tools" / "test_upload_model.py")],
@@ -379,6 +395,7 @@ def main() -> None:
     check_frontend_capture_copy()
     check_api_contract_script()
     check_frontend_config_tests()
+    check_command_model_tests()
     check_upload_model_tests()
     check_progress_model_tests()
     check_storage_model_tests()

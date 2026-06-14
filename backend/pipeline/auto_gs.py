@@ -11,6 +11,10 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 import open3d as o3d
 
+from pipeline.command_model import (
+    build_ns_export_command as build_managed_ns_export_command,
+    build_ns_train_command as build_managed_ns_train_command,
+)
 from pipeline.job_queue import (
     build_image_fingerprint as build_job_image_fingerprint,
     job_images_dir,
@@ -493,57 +497,15 @@ def prune_old_assets(config: PipelineConfig, current_scene: str) -> None:
 
 def build_ns_train_command(config: PipelineConfig, data_dir: Optional[Path] = None) -> List[str]:
     data_dir = data_dir or config.target_data_dir
-    extra_args = shlex.split(config.ns_train_extra_args) if config.ns_train_extra_args else []
-    extra_args = strip_ns_train_managed_args(extra_args)
-    command = [
-        "ns-train",
-        "splatfacto",
-        "--data",
-        str(data_dir),
-        "--max-num-iterations",
-        str(config.ns_max_num_iterations),
-        "--steps-per-save",
-        str(config.ns_steps_per_save),
-        "--viewer.websocket-port",
-        str(config.viewer_port),
-        "--viewer.quit-on-train-completion",
-        "True" if config.ns_quit_on_train_completion else "False",
-        "--pipeline.model.random-init",
-        "False",
-        "--vis",
-        "viewer",
-    ]
-    if extra_args:
-        command.extend(extra_args)
-    command.extend([
-        "nerfstudio-data",
-        "--eval-mode",
-        "fraction",
-        "--train-split-fraction",
-        str(config.train_split_fraction),
-    ])
-    return command
-
-
-def strip_ns_train_managed_args(args: Sequence[str]) -> List[str]:
-    managed = {
-        "--max-num-iterations",
-        "--steps-per-save",
-        "--viewer.quit-on-train-completion",
-    }
-    stripped: List[str] = []
-    skip_next = False
-    for arg in args:
-        if skip_next:
-            skip_next = False
-            continue
-        if arg in managed:
-            skip_next = True
-            continue
-        if any(arg.startswith(flag + "=") for flag in managed):
-            continue
-        stripped.append(arg)
-    return stripped
+    return build_managed_ns_train_command(
+        data_dir=data_dir,
+        max_num_iterations=config.ns_max_num_iterations,
+        steps_per_save=config.ns_steps_per_save,
+        viewer_port=config.viewer_port,
+        quit_on_train_completion=config.ns_quit_on_train_completion,
+        train_split_fraction=config.train_split_fraction,
+        extra_args=config.ns_train_extra_args,
+    )
 
 
 def resolve_latest_ns_config(outputs_root: Path, scene_name: str, since_timestamp: float) -> Optional[Path]:
@@ -571,17 +533,7 @@ def resolve_latest_ns_config(outputs_root: Path, scene_name: str, since_timestam
 
 
 def build_ns_export_command(config_path: Path, output_dir: Path, extra_args: str = "") -> List[str]:
-    command: List[str] = [
-        "ns-export",
-        "gaussian-splat",
-        "--load-config",
-        str(config_path),
-        "--output-dir",
-        str(output_dir),
-    ]
-    if extra_args:
-        command.extend(shlex.split(extra_args))
-    return command
+    return build_managed_ns_export_command(config_path, output_dir, extra_args)
 
 
 def crop_pointcloud_by_reference_bbox(
