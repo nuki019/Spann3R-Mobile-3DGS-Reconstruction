@@ -13,6 +13,8 @@ function testBasics() {
   assert.strictEqual(model.pickString({ name: "scene" }, ["name"]), "scene");
   assert.strictEqual(model.clipText("abcdef", 4), "abcd...");
   assert.strictEqual(model.asText({ ok: true }, 40), '{"ok":true}');
+  assert.strictEqual(model.jobStatusText(" READY "), "待训练");
+  assert.strictEqual(model.jobStatusText("custom"), "custom");
   assert.deepStrictEqual(
     model.buildCopyLinkTarget({ viewerUrl: "https://viewer.example" }, "viewerUrl"),
     { content: "https://viewer.example", label: "Viewer 地址" },
@@ -49,6 +51,7 @@ function testJobNormalization() {
   assert.strictEqual(ready.canCancel, true);
 
   const completed = model.normalizeJobItem({ id: "done", status: "completed" }, 1);
+  assert.strictEqual(completed.statusText, "已完成");
   assert.strictEqual(completed.statusClass, "done");
   assert.strictEqual(completed.canCancel, false);
 
@@ -188,6 +191,12 @@ function testSummaryBuilders() {
   assert.strictEqual(jobs.text, "任务:2 | 排队:1 | 运行:1 | 完成:0 | 失败:0");
   assert.strictEqual(jobs.items.length, 1);
   assert.strictEqual(jobs.items[0].statusText, "label:queued");
+
+  const defaultJobs = model.buildJobsData({
+    summary: { count: 1, queued: 1 },
+    items: [{ id: "job_a", status: "queued", image_count: 60 }],
+  });
+  assert.strictEqual(defaultJobs.items[0].statusText, "排队中");
 
   const logs = model.buildLogsData({ lines: ["old", "middle", "latest"] }, 2);
   assert.strictEqual(logs.text, "lines:3 | latest:latest");

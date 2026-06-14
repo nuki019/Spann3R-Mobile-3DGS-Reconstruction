@@ -154,6 +154,20 @@ function canCancelJobStatus(status) {
   return phasePolicy.canCancelJobStatus(status);
 }
 
+function jobStatusText(status) {
+  const key = (status || "").trim().toLowerCase();
+  const map = {
+    queued: "排队中",
+    uploading: "上传中",
+    ready: "待训练",
+    running: "训练中",
+    completed: "已完成",
+    failed: "失败",
+    stopped: "已取消"
+  };
+  return map[key] || status || "-";
+}
+
 function jobStatusClass(status) {
   if (status === "running") {
     return "running";
@@ -174,7 +188,7 @@ function normalizeJobItem(item, index, statusTextFn) {
   const imageCount = pickNumber(obj, ["image_count", "uploaded_images"]);
   const sceneName = pickString(obj, ["scene_name"]) || "-";
   const updatedAt = pickString(obj, ["updated_at", "created_at", "completed_at"]) || "-";
-  const labelFn = typeof statusTextFn === "function" ? statusTextFn : function(value) { return value || "-"; };
+  const labelFn = typeof statusTextFn === "function" ? statusTextFn : jobStatusText;
   return {
     id: jobId,
     status: status,
@@ -734,6 +748,7 @@ module.exports = {
   getPhaseState,
   inferPointcloudType,
   jobStatusClass,
+  jobStatusText,
   normalizeJobItem,
   normalizePointcloudItem,
   parseProgress,

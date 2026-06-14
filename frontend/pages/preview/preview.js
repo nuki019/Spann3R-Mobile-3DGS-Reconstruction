@@ -217,16 +217,7 @@ Page({
   },
 
   jobStatusText(status) {
-    const map = {
-      queued: "排队中",
-      uploading: "上传中",
-      ready: "待训练",
-      running: "训练中",
-      completed: "已完成",
-      failed: "失败",
-      stopped: "已取消"
-    };
-    return map[status] || status || "-";
+    return previewState.jobStatusText(status);
   },
 
   jobStatusClass(status) {
@@ -234,11 +225,11 @@ Page({
   },
 
   normalizeJobItem(item, index) {
-    return previewState.normalizeJobItem(item, index, (status) => this.jobStatusText(status));
+    return previewState.normalizeJobItem(item, index);
   },
 
   buildJobsData(data) {
-    return previewState.buildJobsData(data, (status) => this.jobStatusText(status));
+    return previewState.buildJobsData(data);
   },
 
   parseStatus(data) {
@@ -329,8 +320,7 @@ Page({
       this.requestGet(this.data.jobsApiUrl)
     ]).then((resultList) => {
       const pollData = previewState.buildSlowPollData(resultList, {
-        dashboardUrl: this.data.dashboardUrl,
-        statusTextFn: (status) => this.jobStatusText(status)
+        dashboardUrl: this.data.dashboardUrl
       });
 
       this.slowPollFailed = pollData.failed;
