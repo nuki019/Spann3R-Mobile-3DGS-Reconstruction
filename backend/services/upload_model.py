@@ -6,7 +6,7 @@ import re
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Optional, Tuple
+from typing import Dict, Iterable, Optional, Tuple
 
 from pipeline.job_queue import job_images_dir, sanitize_job_id
 
@@ -51,3 +51,45 @@ def resolve_upload_destination(
     safe_session = sanitize_job_id(session_id or "wx")
     save_dir = job_images_dir(queue_root, safe_session) if queue_enabled else watch_dir
     return safe_session, save_dir
+
+
+def build_upload_manifest_row(
+    filename: str,
+    size_bytes: int,
+    phase: str,
+    job_id: str,
+    frame_index: str,
+    session_id: str,
+    created_at: Optional[datetime] = None,
+) -> Dict[str, object]:
+    timestamp = created_at or datetime.utcnow()
+    return {
+        "filename": filename,
+        "bytes": size_bytes,
+        "phase": phase,
+        "job_id": job_id,
+        "frame_index": frame_index,
+        "session_id": session_id,
+        "created_at": timestamp.isoformat() + "Z",
+    }
+
+
+def build_upload_response(
+    filename: str,
+    size_bytes: int,
+    phase: str,
+    job_id: str,
+    queue_enabled: bool,
+    job: Dict[str, object],
+) -> Dict[str, object]:
+    return {
+        "code": 200,
+        "ok": True,
+        "msg": "上传成功",
+        "filename": filename,
+        "bytes": size_bytes,
+        "phase": phase,
+        "job_id": job_id,
+        "queue_enabled": queue_enabled,
+        "job": job,
+    }

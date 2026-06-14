@@ -5,7 +5,6 @@ import signal
 import subprocess
 import sys
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -59,7 +58,9 @@ from services.progress_model import (
     parse_progress,
 )
 from services.upload_model import (
+    build_upload_manifest_row,
     build_upload_filename,
+    build_upload_response,
     resolve_upload_destination,
     validate_upload_suffix,
 )
@@ -477,29 +478,19 @@ async def save_uploaded_frame(
         job = {}
 
     manifest = save_dir / "_upload_manifest.jsonl"
-    manifest_row = {
-        "filename": filename,
-        "bytes": total_bytes,
-        "phase": phase,
-        "job_id": safe_session if queue_enabled else "",
-        "frame_index": frame_index,
-        "session_id": session_id,
-        "created_at": datetime.utcnow().isoformat() + "Z",
-    }
+    job_id = safe_session if queue_enabled else ""
+    manifest_row = build_upload_manifest_row(
+        filename=filename,
+        size_bytes=total_bytes,
+        phase=phase,
+        job_id=job_id,
+        frame_index=frame_index,
+        session_id=session_id,
+    )
     with manifest.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(manifest_row, ensure_ascii=False) + "\n")
 
-    return {
-        "code": 200,
-        "ok": True,
-        "msg": "上传成功",
-        "filename": filename,
-        "bytes": total_bytes,
-        "phase": phase,
-        "job_id": safe_session if queue_enabled else "",
-        "queue_enabled": queue_enabled,
-        "job": job,
-    }
+    return build_upload_response(filename, total_bytes, phase, job_id, queue_enabled, job)
 
 
 def clear_all_pointclouds() -> int:

@@ -15,6 +15,8 @@ sys.path.insert(0, str(ROOT / "backend"))
 from pipeline.job_queue import job_images_dir  # noqa: E402
 from services.upload_model import (  # noqa: E402
     build_upload_filename,
+    build_upload_manifest_row,
+    build_upload_response,
     resolve_upload_destination,
     sanitize_frame_index,
     validate_upload_suffix,
@@ -93,10 +95,53 @@ def test_upload_destination() -> None:
     print("[OK] upload destination model")
 
 
+def test_upload_manifest_and_response() -> None:
+    created_at = datetime(2026, 6, 14, 12, 34, 56)
+    manifest = build_upload_manifest_row(
+        filename="frame.jpg",
+        size_bytes=123,
+        phase="input",
+        job_id="wx_01",
+        frame_index="7",
+        session_id="wx/session 01",
+        created_at=created_at,
+    )
+    assert_equal(
+        manifest,
+        {
+            "filename": "frame.jpg",
+            "bytes": 123,
+            "phase": "input",
+            "job_id": "wx_01",
+            "frame_index": "7",
+            "session_id": "wx/session 01",
+            "created_at": "2026-06-14T12:34:56Z",
+        },
+        "upload manifest row changed",
+    )
+
+    response = build_upload_response(
+        filename="frame.jpg",
+        size_bytes=123,
+        phase="input",
+        job_id="wx_01",
+        queue_enabled=True,
+        job={"id": "wx_01", "status": "queued"},
+    )
+    assert_equal(response["code"], 200, "upload response code changed")
+    assert_true(response["ok"], "upload response ok flag changed")
+    assert_equal(response["msg"], "上传成功", "upload response message changed")
+    assert_equal(response["job_id"], "wx_01", "upload response job id changed")
+    assert_true(response["queue_enabled"], "upload response queue flag changed")
+    assert_equal(response["job"], {"id": "wx_01", "status": "queued"}, "upload response job changed")
+    print("[OK] upload manifest and response model")
+
+
 def main() -> None:
     test_upload_suffix()
     test_frame_index_and_filename()
     test_upload_destination()
+    test_upload_manifest_and_response()
     print("[OK] upload model checks passed")
 
 
