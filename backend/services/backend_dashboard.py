@@ -88,6 +88,7 @@ DEFAULT_CONFIG: Dict[str, str] = {
     "WATCH_DIR": str(WATCH_DIR),
     "UPLOAD_SAVE_DIR": str(WATCH_DIR),
     "PIPELINE_JOB_ROOT": str(PIPELINE_JOB_ROOT),
+    "PIPELINE_JOB_ARCHIVE_ROOT": "/root/autodl-tmp/pipeline_jobs_archive",
     "PIPELINE_QUEUE_ENABLED": "true",
     "SCENE_DATA_ROOT": str(SCENE_DATA_ROOT),
     "TEST_PHOTO_ROOT": str(TEST_PHOTO_ROOT),
@@ -98,6 +99,8 @@ DEFAULT_CONFIG: Dict[str, str] = {
     "MAX_PHOTO_SETS_KEEP": "5",
     "RESTART_UPLOAD_CLEANUP": "archive",
     "RESTART_UPLOAD_ARCHIVE_KEEP": "5",
+    "RESTART_QUEUE_CLEANUP": "archive",
+    "RESTART_QUEUE_ARCHIVE_KEEP": "5",
     "PIPELINE_STATE_FILE": str(LOG_DIR / "pipeline_state.json"),
     "OMP_NUM_THREADS": "1",
     "MKL_NUM_THREADS": "1",
@@ -129,6 +132,7 @@ CONFIG_HELP: Dict[str, str] = {
     "WATCH_DIR": "上传照片落盘目录。",
     "UPLOAD_SAVE_DIR": "上传代理保存目录，默认与 WATCH_DIR 一致。",
     "PIPELINE_JOB_ROOT": "队列任务根目录，每个上传 session 会形成一个 job 子目录。",
+    "PIPELINE_JOB_ARCHIVE_ROOT": "重启时队列任务归档目录。",
     "PIPELINE_QUEUE_ENABLED": "是否启用单卡任务队列；启用后上传会按 job/session 隔离。",
     "SCENE_DATA_ROOT": "多场景训练数据根目录（每次自动新建场景子目录）。",
     "TEST_PHOTO_ROOT": "测试照片留存目录（中期交付可复用）。",
@@ -139,6 +143,8 @@ CONFIG_HELP: Dict[str, str] = {
     "MAX_PHOTO_SETS_KEEP": "自动保留最近测试照片集数量。",
     "RESTART_UPLOAD_CLEANUP": "重启后端时处理旧上传图片：archive/delete/keep。",
     "RESTART_UPLOAD_ARCHIVE_KEEP": "重启归档最多保留次数。",
+    "RESTART_QUEUE_CLEANUP": "重启后端时处理旧队列任务：archive/delete/keep；默认跟随上传清理策略。",
+    "RESTART_QUEUE_ARCHIVE_KEEP": "队列任务归档最多保留次数。",
     "PIPELINE_STATE_FILE": "流水线任务状态 JSON 文件路径，供前端和管理台读取。",
     "OMP_NUM_THREADS": "CPU 并行线程上限。",
     "MKL_NUM_THREADS": "MKL 线程上限。",
@@ -578,6 +584,15 @@ def discover_uploaded_images(limit: int = 200) -> List[Dict[str, str]]:
 
 def discover_upload_archives(limit: int = 20) -> List[Dict[str, str]]:
     archive_root = get_config_path("ARCHIVE_DIR", Path("/root/autodl-tmp/input_images_archive"))
+    return discover_archive_dirs(archive_root, limit=limit)
+
+
+def discover_queue_archives(limit: int = 20) -> List[Dict[str, str]]:
+    archive_root = get_config_path("PIPELINE_JOB_ARCHIVE_ROOT", Path("/root/autodl-tmp/pipeline_jobs_archive"))
+    return discover_archive_dirs(archive_root, limit=limit)
+
+
+def discover_archive_dirs(archive_root: Path, limit: int = 20) -> List[Dict[str, str]]:
     if not archive_root.exists():
         return []
     candidates = [item for item in archive_root.iterdir() if item.is_dir()]
@@ -585,13 +600,15 @@ def discover_upload_archives(limit: int = 20) -> List[Dict[str, str]]:
 
     payload: List[Dict[str, str]] = []
     for archive_dir in candidates[:limit]:
-        image_count = len([item for item in archive_dir.iterdir() if item.is_file() and item.suffix in IMAGE_EXTENSIONS])
-        total_size = sum(item.stat().st_size for item in archive_dir.iterdir() if item.is_file())
+        files = [item for item in archive_dir.rglob("*") if item.is_file()]
+        image_count = len([item for item in files if item.suffix in IMAGE_EXTENSIONS])
+        total_size = sum(item.stat().st_size for item in files)
         payload.append(
             {
                 "name": archive_dir.name,
                 "path": str(archive_dir),
                 "image_count": str(image_count),
+                "file_count": str(len(files)),
                 "size_bytes": str(total_size),
                 "mtime": datetime.fromtimestamp(archive_dir.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
             }
@@ -1546,6 +1563,7 @@ async def api_uploads_summary():
         "items": items,
         "jobs": jobs,
         "archives": discover_upload_archives(limit=20),
+        "queue_archives": discover_queue_archives(limit=20),
     }
 
 

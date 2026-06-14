@@ -67,6 +67,7 @@ bash restart_backend_stack.sh
 默认处理方式：
 
 - 队列任务目录：`/root/autodl-tmp/pipeline_jobs`
+- 队列归档目录：`/root/autodl-tmp/pipeline_jobs_archive/restart_时间戳`
 - 旧上传图片目录：`/root/autodl-tmp/input_images`
 - 归档目录：`/root/autodl-tmp/input_images_archive/restart_时间戳`
 - 默认保留最近 5 次重启归档
@@ -75,12 +76,20 @@ bash restart_backend_stack.sh
 
 ```bash
 RESTART_UPLOAD_CLEANUP=delete
+RESTART_QUEUE_CLEANUP=delete
 ```
 
-如需临时保留旧上传图不处理：
+如需临时保留旧上传图和旧队列任务不处理：
 
 ```bash
 RESTART_UPLOAD_CLEANUP=keep
+RESTART_QUEUE_CLEANUP=keep
+```
+
+如需只调整队列归档保留次数：
+
+```bash
+RESTART_QUEUE_ARCHIVE_KEEP=3
 ```
 
 重启后确认：

@@ -34,6 +34,7 @@ TEXT_FILES_TO_SCAN = [
     ROOT / "backend" / "docs" / "user_guide_cn.md",
     ROOT / "backend" / "docs" / "autodl_ops_commands_cn.md",
     ROOT / "backend" / ".env.pipeline.4090.example",
+    ROOT / "backend" / "restart_backend_stack.sh",
     ROOT / "frontend" / "utils" / "oss_upload_utils.js",
 ]
 
@@ -105,6 +106,7 @@ def check_required_text() -> None:
         "smoke_check_delivery.py",
         "6008",
         "点云下载",
+        "RESTART_QUEUE_CLEANUP",
     ]
     for item in required:
         if item not in readme:
@@ -113,6 +115,22 @@ def check_required_text() -> None:
     gitattributes = (ROOT / ".gitattributes").read_text(encoding="utf-8", errors="ignore")
     if "*.sh text eol=lf" not in gitattributes:
         fail(".gitattributes must force LF for shell scripts")
+
+    restart_script = (ROOT / "backend" / "restart_backend_stack.sh").read_text(
+        encoding="utf-8",
+        errors="ignore",
+    )
+    for item in [
+        "PIPELINE_JOB_ROOT",
+        "PIPELINE_JOB_ARCHIVE_ROOT",
+        "RESTART_QUEUE_CLEANUP",
+        "RESTART_QUEUE_ARCHIVE_KEEP",
+        "is_safe_cleanup_root",
+        "cleanup_queue_jobs",
+        "prune_queue_archives",
+    ]:
+        if item not in restart_script:
+            fail(f"restart script missing queue cleanup term: {item}")
     print("[OK] required delivery text")
 
 

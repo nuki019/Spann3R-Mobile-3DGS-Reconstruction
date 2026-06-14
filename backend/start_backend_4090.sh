@@ -30,4 +30,8 @@ echo "${PID}" > "${LOG_DIR}/backend_4090.pid"
 
 echo "4090 后端已启动，PID: ${PID}"
 echo "日志: ${LOG_DIR}/backend_4090.log"
-echo "端口规划: 6008 /upload-proxy -> 内部上传端口 ${UPLOAD_INTERNAL_PORT:-${UPLOAD_PORT:-7006}}，6006 固定留给 Viewer"
+if [[ "${PIPELINE_QUEUE_ENABLED:-true}" =~ ^(1|true|TRUE|yes|YES|y|Y|on|ON)$ ]]; then
+  echo "队列模式: 6008 /upload-proxy 写入 ${PIPELINE_JOB_ROOT:-/root/autodl-tmp/pipeline_jobs}，6006 固定留给 Viewer"
+else
+  echo "单端口模式: ${UPLOAD_PORT:-6006} 上传完成后释放端口，6006 切换为 Viewer"
+fi

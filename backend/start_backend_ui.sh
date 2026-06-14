@@ -34,6 +34,10 @@ DASHBOARD_PID=$!
 echo "后端可视化 UI 已启动，PID: ${DASHBOARD_PID}，端口: ${DASHBOARD_PORT}"
 echo "UI 地址: http://0.0.0.0:${DASHBOARD_PORT}"
 echo "点云下载页: http://0.0.0.0:${DASHBOARD_PORT}/downloads"
-echo "上传代理: http://0.0.0.0:${DASHBOARD_PORT}/upload-proxy/upload -> ${UPLOAD_SAVE_DIR:-${WATCH_DIR:-/root/autodl-tmp/input_images}}"
+if [[ "${PIPELINE_QUEUE_ENABLED:-true}" =~ ^(1|true|TRUE|yes|YES|y|Y|on|ON)$ ]]; then
+  echo "上传代理: http://0.0.0.0:${DASHBOARD_PORT}/upload-proxy/upload -> ${PIPELINE_JOB_ROOT:-/root/autodl-tmp/pipeline_jobs}/<job_id>/images"
+else
+  echo "上传代理: http://0.0.0.0:${DASHBOARD_PORT}/upload-proxy/upload -> ${UPLOAD_SAVE_DIR:-${WATCH_DIR:-/root/autodl-tmp/input_images}}"
+fi
 echo "日志: ${LOG_DIR}/backend_dashboard.log"
 echo "端口规划: 6006(Viewer) + ${DASHBOARD_PORT}(UI/下载/上传代理)"

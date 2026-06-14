@@ -288,7 +288,10 @@ idle → input → spann3r → gaussian → completed
 | `PIPELINE_STATE_FILE` | 后端统一任务状态 JSON，供前端状态页读取 |
 | `PIPELINE_QUEUE_ENABLED` | 启用单卡任务队列；上传按 session/job 隔离，训练按队列顺序执行 |
 | `PIPELINE_JOB_ROOT` | 队列任务根目录，默认 `/root/autodl-tmp/pipeline_jobs` |
+| `PIPELINE_JOB_ARCHIVE_ROOT` | 重启时队列任务归档目录 |
 | `RESTART_UPLOAD_CLEANUP` | 重启时旧上传图片处理策略：`archive` / `delete` / `keep` |
+| `RESTART_QUEUE_CLEANUP` | 重启时旧队列任务处理策略：`archive` / `delete` / `keep` |
+| `RESTART_QUEUE_ARCHIVE_KEEP` | 队列任务归档最多保留次数 |
 
 ## 每场景产出资产
 

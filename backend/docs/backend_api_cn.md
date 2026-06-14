@@ -253,7 +253,7 @@ Base URL 示例：`http://127.0.0.1:6008`
 
 #### GET `/api/uploads/summary`
 
-返回上传目录摘要与队列摘要：`watch_dir`、`queue_root`、`queue_enabled`、`queue`、`jobs`、`items`。
+返回上传目录摘要与队列摘要：`watch_dir`、`queue_root`、`queue_enabled`、`queue`、`jobs`、`items`、`queue_archives`。
 
 #### POST `/api/uploads/clear`
 

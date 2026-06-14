@@ -251,7 +251,7 @@ Uses the same multipart fields as the standalone upload service. This is the rec
 
 #### GET `/api/uploads/summary`
 
-Returns upload and queue summary: `watch_dir`, `queue_root`, `queue_enabled`, `queue`, `jobs`, `items`.
+Returns upload and queue summary: `watch_dir`, `queue_root`, `queue_enabled`, `queue`, `jobs`, `items`, `queue_archives`.
 
 #### POST `/api/uploads/clear`
 
