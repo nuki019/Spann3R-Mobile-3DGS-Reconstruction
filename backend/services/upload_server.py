@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pipeline.job_queue import record_uploaded_frame
 from services.upload_model import (
     build_upload_filename,
+    build_upload_response,
     resolve_upload_destination,
     validate_upload_suffix,
 )
@@ -156,15 +157,14 @@ async def upload_frame(
         )
     else:
         job = {}
-    return {
-        "code": 200,
-        "msg": "上传成功",
-        "filename": filename,
-        "bytes": total_bytes,
-        "job_id": job_id if QUEUE_ENABLED else "",
-        "queue_enabled": QUEUE_ENABLED,
-        "job": job,
-    }
+    return build_upload_response(
+        filename,
+        total_bytes,
+        "upload",
+        job_id if QUEUE_ENABLED else "",
+        QUEUE_ENABLED,
+        job,
+    )
 
 if __name__ == "__main__":
     import uvicorn
