@@ -7,7 +7,6 @@ import signal
 import subprocess
 import sys
 import time
-import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -18,7 +17,6 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 from pipeline.job_queue import (
-    job_images_dir,
     list_jobs,
     record_uploaded_frame,
     sanitize_job_id,
@@ -37,6 +35,11 @@ from services.pointcloud_index import (
     summarize_pointclouds,
     under_allowed_roots as is_under_allowed_roots,
     write_pointcloud_zip,
+)
+from services.upload_model import (
+    build_upload_filename,
+    resolve_upload_destination,
+    validate_upload_suffix,
 )
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
@@ -550,10 +553,10 @@ def validate_upload_token(form_token: str, header_token: str) -> None:
 
 
 def validate_upload_extension(filename: str) -> str:
-    suffix = Path(filename or "").suffix.lower()
-    if suffix not in {".jpg", ".jpeg", ".png"}:
-        raise HTTPException(status_code=400, detail="仅支持 jpg/jpeg/png 格式")
-    return suffix
+    try:
+        return validate_upload_suffix(filename)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
 
 
 def current_phase_for_upload_gate() -> str:
@@ -611,16 +614,15 @@ async def save_uploaded_frame(
 
     queue_root = get_config_path("PIPELINE_JOB_ROOT", PIPELINE_JOB_ROOT)
     watch_dir = get_config_path("WATCH_DIR", WATCH_DIR)
-    safe_session = sanitize_job_id(session_id or "wx")
-    save_dir = job_images_dir(queue_root, safe_session) if queue_enabled else watch_dir
+    safe_session, save_dir = resolve_upload_destination(
+        queue_enabled,
+        queue_root,
+        watch_dir,
+        session_id,
+    )
     save_dir.mkdir(parents=True, exist_ok=True)
 
-    safe_index = re.sub(r"[^0-9]+", "", frame_index or "")[:8]
-    index_part = f"_{safe_index}" if safe_index else ""
-    filename = (
-        f"{datetime.utcnow().strftime('%Y%m%d%H%M%S_%f')}_"
-        f"{safe_session}{index_part}_{uuid.uuid4().hex[:8]}{suffix}"
-    )
+    filename = build_upload_filename(safe_session, frame_index, suffix)
     save_path = save_dir / filename
 
     total_bytes = 0

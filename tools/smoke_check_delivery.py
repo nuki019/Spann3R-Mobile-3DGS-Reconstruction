@@ -17,6 +17,7 @@ PYTHON_FILES = [
     ROOT / "backend" / "services" / "backend_dashboard.py",
     ROOT / "backend" / "services" / "pointcloud_download_server.py",
     ROOT / "backend" / "services" / "pointcloud_index.py",
+    ROOT / "backend" / "services" / "upload_model.py",
     ROOT / "backend" / "services" / "upload_server.py",
     ROOT / "backend" / "pipeline" / "job_queue.py",
     ROOT / "backend" / "pipeline" / "task_state.py",
@@ -28,6 +29,7 @@ PYTHON_FILES = [
     ROOT / "tools" / "test_frontend_config.py",
     ROOT / "tools" / "test_pipeline_models.py",
     ROOT / "tools" / "test_pointcloud_downloads.py",
+    ROOT / "tools" / "test_upload_model.py",
 ]
 
 JS_FILES = [
@@ -116,6 +118,7 @@ def check_required_text() -> None:
         "test_frontend_config.py",
         "test_pipeline_models.py",
         "test_pointcloud_downloads.py",
+        "test_upload_model.py",
         "6008",
         "点云下载",
         "RESTART_QUEUE_CLEANUP",
@@ -255,6 +258,19 @@ def check_frontend_config_tests() -> None:
     print(result.stdout.rstrip())
 
 
+def check_upload_model_tests() -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "test_upload_model.py")],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        fail(f"upload model tests failed\n{result.stdout}\n{result.stderr}")
+    print(result.stdout.rstrip())
+
+
 def check_pointcloud_download_tests() -> None:
     result = subprocess.run(
         [sys.executable, str(ROOT / "tools" / "test_pointcloud_downloads.py")],
@@ -331,6 +347,7 @@ def main() -> None:
     check_frontend_capture_copy()
     check_api_contract_script()
     check_frontend_config_tests()
+    check_upload_model_tests()
     check_pipeline_model_tests()
     check_pointcloud_download_tests()
     check_job_queue_smoke()

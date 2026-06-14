@@ -1,14 +1,17 @@
-from datetime import datetime
 from pathlib import Path
 from typing import Dict
 import os
 import secrets
-import uuid
 
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from pipeline.job_queue import job_images_dir, record_uploaded_frame, sanitize_job_id
+from pipeline.job_queue import record_uploaded_frame
+from services.upload_model import (
+    build_upload_filename,
+    resolve_upload_destination,
+    validate_upload_suffix,
+)
 
 VALID_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 CHUNK_SIZE = 1024 * 1024
@@ -54,10 +57,10 @@ def validate_token(form_token: str, header_token: str) -> None:
 
 
 def validate_file_extension(filename: str) -> str:
-    suffix = Path(filename).suffix.lower()
-    if suffix not in VALID_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="仅支持 jpg/jpeg/png 格式")
-    return suffix
+    try:
+        return validate_upload_suffix(filename, VALID_EXTENSIONS)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
 
 
 @app.get("/")
@@ -105,15 +108,14 @@ async def upload_frame(
     validate_token(token, x_auth_token)
     suffix = validate_file_extension(frame_file.filename or "")
 
-    job_id = sanitize_job_id(session_id or "wx")
-    save_dir = job_images_dir(PIPELINE_JOB_ROOT, job_id) if QUEUE_ENABLED else SAVE_DIR
-    save_dir.mkdir(parents=True, exist_ok=True)
-    safe_index = "".join(ch for ch in (frame_index or "") if ch.isdigit())[:8]
-    index_part = f"_{safe_index}" if safe_index else ""
-    filename = (
-        f"{datetime.utcnow().strftime('%Y%m%d%H%M%S_%f')}_"
-        f"{job_id}{index_part}_{uuid.uuid4().hex[:8]}{suffix}"
+    job_id, save_dir = resolve_upload_destination(
+        QUEUE_ENABLED,
+        PIPELINE_JOB_ROOT,
+        SAVE_DIR,
+        session_id,
     )
+    save_dir.mkdir(parents=True, exist_ok=True)
+    filename = build_upload_filename(job_id, frame_index, suffix)
     save_path = save_dir / filename
 
     total_bytes = 0
