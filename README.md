@@ -343,6 +343,7 @@ python tools/test_config_model.py
 python tools/test_dashboard_state_model.py
 python tools/test_gaussian_export_model.py
 node tools/test_capture_state_model.js
+node tools/test_oss_upload_utils.js
 node tools/test_preview_state_model.js
 python tools/test_command_model.py
 python tools/test_upload_model.py

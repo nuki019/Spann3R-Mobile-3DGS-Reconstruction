@@ -101,6 +101,40 @@ function parseUploadResult(res) {
   };
 }
 
+function parseUploadServiceReadyResult(res) {
+  var statusCode = res && res.statusCode ? res.statusCode : 0;
+  if (statusCode < 200 || statusCode >= 300) {
+    return {
+      ok: false,
+      message: "上传服务检查失败（6008 /upload-proxy/healthz）：HTTP " + statusCode
+    };
+  }
+  var payload = res && res.data ? res.data : null;
+  var ok = Boolean(payload && typeof payload === "object" && payload.status === "ok");
+  var allowUpload = payload && typeof payload.allow_upload === "boolean" ? payload.allow_upload : true;
+  if (ok && allowUpload) {
+    return {
+      ok: true,
+      message: ""
+    };
+  }
+  if (ok) {
+    return {
+      ok: false,
+      message: "上传服务已连接，但当前阶段暂不接收新照片"
+    };
+  }
+  return {
+    ok: false,
+    message: "上传服务检查失败（6008 /upload-proxy/healthz）：status!=ok"
+  };
+}
+
+function buildUploadServiceNetworkMessage(err) {
+  var errMsg = err && err.errMsg ? err.errMsg : "network fail";
+  return "上传服务检查失败（6008 /upload-proxy/healthz）：" + errMsg;
+}
+
 function buildUploadSessionId() {
   return "wx_" + Date.now() + "_" + Math.random().toString(16).slice(2, 10);
 }
@@ -142,41 +176,12 @@ function uploadFramesToBackend(frameList, progressCallback, resultCallback) {
         method: "GET",
         timeout: 5000,
         success: function(res) {
-          var statusCode = res && res.statusCode ? res.statusCode : 0;
-          if (statusCode < 200 || statusCode >= 300) {
-            resolve({
-              ok: false,
-              message: "上传服务检查失败（6008 /upload-proxy/healthz）：HTTP " + statusCode
-            });
-            return;
-          }
-          var payload = res && res.data ? res.data : null;
-          var ok = Boolean(payload && typeof payload === "object" && payload.status === "ok");
-          var allowUpload = payload && typeof payload.allow_upload === "boolean" ? payload.allow_upload : true;
-          if (ok && allowUpload) {
-            resolve({
-              ok: true,
-              message: ""
-            });
-            return;
-          }
-          if (ok) {
-            resolve({
-              ok: false,
-              message: "上传服务已连接，但当前阶段暂不接收新照片"
-            });
-            return;
-          }
-          resolve({
-            ok: false,
-            message: "上传服务检查失败（6008 /upload-proxy/healthz）：status!=ok"
-          });
+          resolve(parseUploadServiceReadyResult(res));
         },
         fail: function(err) {
-          var errMsg = err && err.errMsg ? err.errMsg : "network fail";
           resolve({
             ok: false,
-            message: "上传服务检查失败（6008 /upload-proxy/healthz）：" + errMsg
+            message: buildUploadServiceNetworkMessage(err)
           });
         }
       });
@@ -328,5 +333,8 @@ module.exports = {
   uploadFramesToBackend: uploadFramesToBackend,
   BACKEND_LINKS: BACKEND_LINKS,
   DASHBOARD_AUTH_TOKEN: DASHBOARD_AUTH_TOKEN,
-  buildUploadSessionId: buildUploadSessionId
+  buildUploadSessionId: buildUploadSessionId,
+  buildUploadServiceNetworkMessage: buildUploadServiceNetworkMessage,
+  parseUploadResult: parseUploadResult,
+  parseUploadServiceReadyResult: parseUploadServiceReadyResult
 };

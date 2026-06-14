@@ -57,6 +57,7 @@ JS_FILES = [
     ROOT / "frontend" / "utils" / "phase_policy.js",
     ROOT / "frontend" / "utils" / "preview_state_model.js",
     ROOT / "tools" / "test_capture_state_model.js",
+    ROOT / "tools" / "test_oss_upload_utils.js",
     ROOT / "tools" / "test_preview_state_model.js",
 ]
 
@@ -144,6 +145,7 @@ def check_required_text() -> None:
         "test_dashboard_state_model.py",
         "test_gaussian_export_model.py",
         "test_capture_state_model.js",
+        "test_oss_upload_utils.js",
         "test_preview_state_model.js",
         "test_command_model.py",
         "test_pipeline_models.py",
