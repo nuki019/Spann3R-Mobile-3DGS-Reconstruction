@@ -217,6 +217,18 @@ def check_scene_gaussian_and_zip(
             "path": str(files["outside"]),
         }
     )
+    unsafe_name = write_fake_ply(
+        files["new_clipped"].parent / "point cloud #1.ply",
+        b"unsafe-name",
+        1_700_000_099,
+    )
+    selected.append(
+        {
+            "scene": "../scene new",
+            "name": unsafe_name.name,
+            "path": str(unsafe_name),
+        }
+    )
 
     with tempfile.TemporaryDirectory() as archive_dir:
         archive_path = Path(archive_dir) / "pointclouds.zip"
@@ -225,10 +237,11 @@ def check_scene_gaussian_and_zip(
             names = sorted(archive.namelist())
     expect(
         names == [
+            "scene_new_point_cloud__1.ply",
             "scene_new_scene_new_downsampled.ply",
             "scene_new_scene_new_gaussian_clipped.ply",
         ],
-        "zip archive contents changed",
+        "zip archive contents or safe names changed",
     )
 
 

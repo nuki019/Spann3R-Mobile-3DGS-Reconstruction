@@ -308,7 +308,10 @@ def write_pointcloud_zip(
             path = Path(item["path"])
             if not path.exists() or not under_allowed_roots(path, allowed_roots):
                 continue
-            arcname = f"{item.get('scene') or 'scene'}_{path.name}"
+            arcname = (
+                f"{safe_archive_component(str(item.get('scene') or ''), 'scene')}_"
+                f"{safe_archive_component(path.name, 'pointcloud.ply')}"
+            )
             count = used_names.get(arcname, 0)
             used_names[arcname] = count + 1
             if count:

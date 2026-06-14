@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -12,9 +13,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from pipeline.job_queue import (  # noqa: E402
+    build_image_fingerprint,
     build_cancel_job_decision,
     job_dir,
     job_images_dir,
+    list_images,
     list_jobs,
     list_runnable_jobs,
     mark_job,
@@ -114,6 +117,19 @@ def test_job_queue_model() -> None:
         images_dir.mkdir(parents=True)
         (images_dir / "frame_000.jpg").write_bytes(b"fake-jpeg")
         (images_dir / "notes.txt").write_text("ignored", encoding="utf-8")
+        os.utime(images_dir / "frame_000.jpg", ns=(2_000_000_000, 2_000_000_000))
+        (images_dir / "frame_older.PNG").write_bytes(b"older")
+        os.utime(images_dir / "frame_older.PNG", ns=(1_000_000_000, 1_000_000_000))
+
+        listed_images = list_images(images_dir)
+        assert_equal(
+            [path.name for path in listed_images],
+            ["frame_older.PNG", "frame_000.jpg"],
+            "queue image listing should match storage ordering and extension rules",
+        )
+        fingerprint = build_image_fingerprint(listed_images)
+        assert_equal(fingerprint[0][0], "frame_older.PNG", "queue fingerprint should use image names")
+        assert_equal(fingerprint[0][1], 5, "queue fingerprint should use image sizes")
 
         queued = record_uploaded_frame(
             queue_root,
@@ -124,7 +140,7 @@ def test_job_queue_model() -> None:
             source_name="frame.jpg",
         )
         assert_equal(queued["status"], "queued", "uploaded frame should create a queued job")
-        assert_equal(queued["image_count"], 1, "queue image count should include only images")
+        assert_equal(queued["image_count"], 2, "queue image count should include only images")
         assert_true(Path(str(queued["manifest"])).exists(), "upload manifest should exist")
 
         manifest_lines = Path(str(queued["manifest"])).read_text(encoding="utf-8").splitlines()
@@ -157,7 +173,7 @@ def test_job_queue_model() -> None:
             source_name="frame.jpg",
         )
         assert_equal(late["status"], "running", "late upload must not reset running job to queued")
-        assert_equal(late["image_count"], 2, "late upload should refresh image count")
+        assert_equal(late["image_count"], 3, "late upload should refresh image count")
         assert_equal(len(list_runnable_jobs(queue_root)), 0, "running job must not be runnable again")
         assert_equal(summarize_jobs(queue_root)["running"], 1, "summary should count running jobs")
         manifest_lines = Path(str(late["manifest"])).read_text(encoding="utf-8").splitlines()
@@ -188,7 +204,7 @@ def test_job_queue_model() -> None:
             "completed",
             "post-completion upload must not reopen completed jobs",
         )
-        assert_equal(post_complete["image_count"], 3, "post-completion upload should refresh image count")
+        assert_equal(post_complete["image_count"], 4, "post-completion upload should refresh image count")
         manifest_lines = Path(str(post_complete["manifest"])).read_text(encoding="utf-8").splitlines()
         assert_equal(len(manifest_lines), 3, "manifest should append post-completion rows")
 

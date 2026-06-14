@@ -10,9 +10,10 @@ from pipeline.job_policy import (
     next_status_after_upload,
     summarize_job_statuses,
 )
-
-
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
+from pipeline.storage_model import (
+    build_image_fingerprint as build_storage_image_fingerprint,
+    list_images as list_storage_images,
+)
 
 
 def utc_now() -> str:
@@ -38,15 +39,11 @@ def job_status_path(queue_root: Path, job_id: str) -> Path:
 
 
 def list_images(directory: Path) -> List[Path]:
-    if not directory.exists():
-        return []
-    images = [item for item in directory.iterdir() if item.is_file() and item.suffix in IMAGE_EXTENSIONS]
-    images.sort(key=lambda path: (path.stat().st_mtime_ns, path.name))
-    return images
+    return list_storage_images(directory)
 
 
 def build_image_fingerprint(images: Iterable[Path]) -> Tuple[Tuple[str, int, int], ...]:
-    return tuple((path.name, path.stat().st_size, path.stat().st_mtime_ns) for path in images)
+    return build_storage_image_fingerprint(images)
 
 
 def read_job(queue_root: Path, job_id: str) -> Dict[str, object]:

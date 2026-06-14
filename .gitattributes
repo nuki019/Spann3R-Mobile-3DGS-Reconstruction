@@ -1,1 +1,8 @@
+.gitattributes text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.wxml text eol=lf
+*.wxss text eol=lf
+*.md text eol=lf
 *.sh text eol=lf
