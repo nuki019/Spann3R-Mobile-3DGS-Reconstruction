@@ -22,6 +22,7 @@ PYTHON_FILES = [
     ROOT / "backend" / "pipeline" / "backend_4090.py",
     ROOT / "tools" / "smoke_check_delivery.py",
     ROOT / "tools" / "api_contract_check.py",
+    ROOT / "tools" / "autodl_preflight_check.py",
 ]
 
 JS_FILES = [
@@ -106,6 +107,7 @@ def check_required_text() -> None:
         "NS_MAX_NUM_ITERATIONS",
         "smoke_check_delivery.py",
         "api_contract_check.py",
+        "autodl_preflight_check.py",
         "6008",
         "点云下载",
         "RESTART_QUEUE_CLEANUP",

@@ -21,6 +21,18 @@ ps -ef | grep -E 'backend_4090|backend_dashboard|upload_server|ns-train' | grep 
 ss -lntp | grep -E ':6006|:6008|:7006' || true
 ```
 
+演示前推荐运行一次自动检查：
+
+```bash
+python tools/autodl_preflight_check.py --base-url http://127.0.0.1:6008
+```
+
+如果只是检查代码和配置文件、不要求后端已经启动：
+
+```bash
+python tools/autodl_preflight_check.py --offline
+```
+
 判断方式：
 
 - `phase=input`：正在等待上传或上传稳定。
