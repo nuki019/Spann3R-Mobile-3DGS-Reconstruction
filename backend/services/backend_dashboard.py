@@ -1,7 +1,6 @@
 import json
 import os
 import secrets
-import shutil
 import signal
 import subprocess
 import sys
@@ -42,6 +41,7 @@ from services.config_model import (
     read_config_file,
     write_config_file,
 )
+from services.cleanup_model import clear_non_running_jobs, clear_uploaded_inputs
 from services.dashboard_state_model import active_job_from_state, merge_state_progress, normalize_state_phase
 from services.asset_inventory import (
     discover_archive_dirs as discover_archive_dirs_for_root,
@@ -350,34 +350,12 @@ def read_latest_scene() -> str:
 
 def clear_uploaded_images() -> int:
     watch_dir = get_config_path("WATCH_DIR", WATCH_DIR)
-    deleted = 0
-    for image_path in list_images(watch_dir):
-        image_path.unlink(missing_ok=True)
-        deleted += 1
-    for part_path in watch_dir.glob("*.part") if watch_dir.exists() else []:
-        part_path.unlink(missing_ok=True)
-        deleted += 1
-    manifest = watch_dir / "_upload_manifest.jsonl"
-    if manifest.exists():
-        manifest.unlink(missing_ok=True)
-        deleted += 1
-    return deleted
+    return clear_uploaded_inputs(watch_dir)
 
 
 def clear_upload_jobs() -> int:
     queue_root = get_config_path("PIPELINE_JOB_ROOT", PIPELINE_JOB_ROOT)
-    if not queue_root.exists():
-        return 0
-    deleted = 0
-    for job in list_jobs(queue_root, limit=1000):
-        status = str(job.get("status") or "")
-        if status in {"running"}:
-            continue
-        path = queue_root / sanitize_job_id(str(job.get("id") or job.get("job_id") or ""))
-        if path.exists():
-            shutil.rmtree(path, ignore_errors=True)
-            deleted += 1
-    return deleted
+    return clear_non_running_jobs(queue_root, list_jobs(queue_root, limit=1000))
 
 
 def validate_upload_token(form_token: str, header_token: str) -> None:
