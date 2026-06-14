@@ -7,26 +7,17 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 from services.pointcloud_index import (
     DEFAULT_POINTCLOUD_ROOTS,
+    build_index_download_decision,
     build_latest_download_decision,
     discover_pointclouds as discover_pointcloud_items,
     index_by_id as index_pointclouds_by_id,
-    infer_pointcloud_variant as infer_pointcloud_variant_for_path,
     parse_pointcloud_roots,
-    under_allowed_roots as is_under_allowed_roots,
 )
 
 DEFAULT_ROOTS = DEFAULT_POINTCLOUD_ROOTS
 ROOTS = parse_pointcloud_roots(os.getenv("POINTCLOUD_ROOTS", ""), DEFAULT_ROOTS)
 
 app = FastAPI(title="PointCloud Download Service")
-
-
-def under_allowed_roots(path: Path) -> bool:
-    return is_under_allowed_roots(path, ROOTS)
-
-
-def infer_pointcloud_variant(file_path: Path) -> str:
-    return infer_pointcloud_variant_for_path(file_path)
 
 
 def discover_pointclouds() -> List[Dict[str, str]]:
@@ -100,12 +91,10 @@ async def download_latest(prefer: str = "gaussian"):
 
 @app.get("/download/{file_id}")
 async def download_by_id(file_id: str):
-    mapping = index_by_id()
-    if file_id not in mapping:
-        raise HTTPException(status_code=404, detail="文件不存在或已过期")
-    path = mapping[file_id]
-    if not path.exists() or not under_allowed_roots(path):
-        raise HTTPException(status_code=404, detail="文件不存在")
+    decision = build_index_download_decision(index_by_id(), file_id, ROOTS)
+    if not decision["ok"]:
+        raise HTTPException(status_code=int(decision["status_code"]), detail=str(decision["detail"]))
+    path = Path(decision["path"])
     return FileResponse(path, filename=path.name, media_type="application/octet-stream")
 
 

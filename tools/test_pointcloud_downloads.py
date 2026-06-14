@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from services.pointcloud_index import (  # pylint: disable=wrong-import-position
+    build_index_download_decision,
     build_latest_download_decision,
     build_pointclouds_summary_payload,
     build_scene_download_decision,
@@ -137,7 +138,11 @@ def check_discovery_and_selection(roots: list[Path], files: dict[str, Path]) -> 
     return items
 
 
-def check_processed_summary_and_index(items: list[dict[str, str]]) -> None:
+def check_processed_summary_and_index(
+    roots: list[Path],
+    files: dict[str, Path],
+    items: list[dict[str, str]],
+) -> None:
     processed = filter_pointclouds_by_processed(items, True)
     raw = filter_pointclouds_by_processed(items, False)
     expect({item["variant"] for item in processed} >= {"downsampled", "train"}, "processed filter failed")
@@ -151,6 +156,22 @@ def check_processed_summary_and_index(items: list[dict[str, str]]) -> None:
 
     mapping = index_by_id(items)
     expect(set(mapping) == {item["id"] for item in items}, "id index mismatch")
+    indexed_decision = build_index_download_decision(mapping, items[0]["id"], roots)
+    expect(indexed_decision["ok"] is True, "indexed download decision should succeed")
+    expect(indexed_decision["path"] == mapping[items[0]["id"]], "indexed download path changed")
+
+    missing_decision = build_index_download_decision(mapping, "missing", roots)
+    expect(missing_decision["ok"] is False, "missing id decision should fail")
+    expect(missing_decision["detail"] == "文件不存在或已过期", "missing id detail changed")
+
+    outside_decision = build_index_download_decision({"outside": files["outside"]}, "outside", roots)
+    expect(outside_decision["ok"] is False, "outside indexed path should be rejected")
+    expect(outside_decision["detail"] == "文件不存在", "outside indexed detail changed")
+
+    deleted_path = roots[0] / "deleted.ply"
+    deleted_mapping = {"deleted": deleted_path}
+    deleted_decision = build_index_download_decision(deleted_mapping, "deleted", roots)
+    expect(deleted_decision["ok"] is False, "deleted indexed path should be rejected")
 
     payload = build_pointclouds_summary_payload(items, limit=2)
     expect(payload["summary"] == summary, "pointcloud summary payload changed")
@@ -306,7 +327,7 @@ def main() -> None:
         parsed_roots = parse_pointcloud_roots(",".join(str(root) for root in roots), [])
         expect(parsed_roots == [root.resolve() for root in roots], "root parsing failed")
         items = check_discovery_and_selection(roots, files)
-        check_processed_summary_and_index(items)
+        check_processed_summary_and_index(roots, files, items)
         check_download_selection_helpers(items)
         check_scene_gaussian_and_zip(roots, items, files)
     check_clear_pointcloud_files()

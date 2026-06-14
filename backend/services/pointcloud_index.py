@@ -156,6 +156,36 @@ def index_by_id(items: Iterable[Dict[str, str]]) -> Dict[str, Path]:
     return mapping
 
 
+def build_index_download_decision(
+    mapping: Dict[str, Path],
+    file_id: str,
+    roots: Iterable[Path],
+) -> Dict[str, object]:
+    if file_id not in mapping:
+        return {
+            "ok": False,
+            "status_code": 404,
+            "detail": "文件不存在或已过期",
+            "path": None,
+        }
+
+    path = mapping[file_id]
+    if not path.exists() or not under_allowed_roots(path, roots):
+        return {
+            "ok": False,
+            "status_code": 404,
+            "detail": "文件不存在",
+            "path": None,
+        }
+
+    return {
+        "ok": True,
+        "status_code": 200,
+        "detail": "",
+        "path": path,
+    }
+
+
 def human_size(size_bytes: int) -> str:
     value = float(max(size_bytes, 0))
     for unit in ("B", "KB", "MB", "GB"):
