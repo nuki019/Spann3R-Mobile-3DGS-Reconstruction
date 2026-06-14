@@ -3,8 +3,6 @@ const { BACKEND_LINKS, DASHBOARD_AUTH_TOKEN } = require("../../utils/oss_upload_
 const previewState = require("../../utils/preview_state_model");
 const {
   asText,
-  clipText,
-  formatBytes,
   pickNumber,
   pickString,
   toObject
@@ -193,36 +191,15 @@ Page({
   },
 
   buildUploadStatsText(data) {
-    const obj = toObject(data);
-    const fileCount = pickNumber(obj, ["uploaded_files", "files", "file_count", "count", "total_files"]);
-    const byteCount = pickNumber(obj, ["uploaded_bytes", "bytes", "byte_count", "total_bytes"]);
-    const fileText = fileCount === null ? "文件数: -" : "文件数: " + fileCount;
-    const byteText = byteCount === null ? "字节数: -" : "字节数: " + formatBytes(byteCount);
-    return fileText + " | " + byteText;
+    return previewState.buildUploadStatsText(data);
   },
 
   buildUploadsSummaryText(data) {
-    const obj = toObject(data);
-    const count = pickNumber(obj, ["count"]);
-    const latestMtime = pickString(obj, ["latest_mtime"]);
-    const watchDir = pickString(obj, ["watch_dir"]);
-    const countText = count === null ? "count:-" : "count:" + count;
-    const mtimeText = latestMtime ? "latest:" + latestMtime : "latest:-";
-    const dirText = watchDir ? "dir:" + watchDir : "dir:-";
-    return countText + " | " + mtimeText + " | " + clipText(dirText, 120);
+    return previewState.buildUploadsSummaryText(data);
   },
 
   buildScenesSummaryText(data) {
-    const obj = toObject(data);
-    const latestScene = pickString(obj, ["latest_scene"]);
-    const datasetCount = pickNumber(obj, ["dataset_count"]);
-    const photoSceneCount = pickNumber(obj, ["photo_scene_count"]);
-    const pointcloudCount = pickNumber(obj, ["pointcloud_count"]);
-    const sceneText = latestScene ? "latest:" + latestScene : "latest:-";
-    const dsText = datasetCount === null ? "dataset:-" : "dataset:" + datasetCount;
-    const photoText = photoSceneCount === null ? "photo:-" : "photo:" + photoSceneCount;
-    const pcText = pointcloudCount === null ? "pointcloud:-" : "pointcloud:" + pointcloudCount;
-    return sceneText + " | " + dsText + " | " + photoText + " | " + pcText;
+    return previewState.buildScenesSummaryText(data);
   },
 
   toDashboardAbsoluteUrl(pathOrUrl) {
@@ -262,20 +239,7 @@ Page({
   },
 
   buildPointcloudSummary(data) {
-    const obj = toObject(data);
-    const summary = toObject(obj.summary);
-    const items = Array.isArray(obj.items) ? obj.items.map((item) => this.normalizePointcloudItem(item)) : [];
-    const count = pickNumber(summary, ["count"]);
-    const totalSize = pickString(summary, ["total_size"]);
-    const latest = toObject(summary.latest);
-    const sceneCount = summary.scenes && typeof summary.scenes === "object" ? Object.keys(summary.scenes).length : 0;
-    const countText = count === null ? "文件数:-" : "文件数:" + count;
-    const sizeText = totalSize ? "总大小:" + totalSize : "总大小:-";
-    const latestText = latest && latest.name ? "最新:" + latest.name : "最新:-";
-    return {
-      text: countText + " | " + sizeText + " | 场景:" + sceneCount + " | " + clipText(latestText, 80),
-      items: items.slice(0, 8)
-    };
+    return previewState.buildPointcloudSummary(data, this.data.dashboardUrl, (obj) => this.inferPointcloudType(obj));
   },
 
   jobStatusText(status) {
@@ -300,23 +264,7 @@ Page({
   },
 
   buildJobsData(data) {
-    const obj = toObject(data);
-    const summary = toObject(obj.summary);
-    const items = Array.isArray(obj.items) ? obj.items.map((item, index) => this.normalizeJobItem(item, index)) : [];
-    const totalCount = pickNumber(summary, ["count"]);
-    const queuedCount = pickNumber(summary, ["queued"]);
-    const runningCount = pickNumber(summary, ["running"]);
-    const completedCount = pickNumber(summary, ["completed"]);
-    const failedCount = pickNumber(summary, ["failed"]);
-    const countText = totalCount === null ? "任务:-" : "任务:" + totalCount;
-    const queuedText = queuedCount === null ? "排队:-" : "排队:" + queuedCount;
-    const runningText = runningCount === null ? "运行:-" : "运行:" + runningCount;
-    const completedText = completedCount === null ? "完成:-" : "完成:" + completedCount;
-    const failedText = failedCount === null ? "失败:-" : "失败:" + failedCount;
-    return {
-      text: countText + " | " + queuedText + " | " + runningText + " | " + completedText + " | " + failedText,
-      items: items.slice(0, 8)
-    };
+    return previewState.buildJobsData(data, (status) => this.jobStatusText(status));
   },
 
   parseStatus(data) {
@@ -544,19 +492,7 @@ Page({
   },
 
   buildLogsData(data) {
-    const obj = toObject(data);
-    const lines = Array.isArray(obj.lines) ? obj.lines : [];
-    if (lines.length === 0) {
-      return { text: "lines:0 | latest:-", items: [] };
-    }
-    const latestLine = lines[lines.length - 1];
-    return {
-      text: "lines:" + lines.length + " | latest:" + clipText(latestLine, 100),
-      items: lines.slice(-5).map((line, index) => ({
-        id: String(index),
-        text: clipText(line, 140)
-      }))
-    };
+    return previewState.buildLogsData(data);
   },
 
   refreshFast() {

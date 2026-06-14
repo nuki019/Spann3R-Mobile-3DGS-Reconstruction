@@ -178,8 +178,107 @@ function normalizePointcloudItem(item, dashboardUrl, typeTextFn) {
   };
 }
 
+function buildUploadStatsText(data) {
+  const obj = toObject(data);
+  const fileCount = pickNumber(obj, ["uploaded_files", "files", "file_count", "count", "total_files"]);
+  const byteCount = pickNumber(obj, ["uploaded_bytes", "bytes", "byte_count", "total_bytes"]);
+  const fileText = fileCount === null ? "文件数: -" : "文件数: " + fileCount;
+  const byteText = byteCount === null ? "字节数: -" : "字节数: " + formatBytes(byteCount);
+  return fileText + " | " + byteText;
+}
+
+function buildUploadsSummaryText(data) {
+  const obj = toObject(data);
+  const count = pickNumber(obj, ["count"]);
+  const latestMtime = pickString(obj, ["latest_mtime"]);
+  const watchDir = pickString(obj, ["watch_dir"]);
+  const countText = count === null ? "count:-" : "count:" + count;
+  const mtimeText = latestMtime ? "latest:" + latestMtime : "latest:-";
+  const dirText = watchDir ? "dir:" + watchDir : "dir:-";
+  return countText + " | " + mtimeText + " | " + clipText(dirText, 120);
+}
+
+function buildScenesSummaryText(data) {
+  const obj = toObject(data);
+  const latestScene = pickString(obj, ["latest_scene"]);
+  const datasetCount = pickNumber(obj, ["dataset_count"]);
+  const photoSceneCount = pickNumber(obj, ["photo_scene_count"]);
+  const pointcloudCount = pickNumber(obj, ["pointcloud_count"]);
+  const sceneText = latestScene ? "latest:" + latestScene : "latest:-";
+  const dsText = datasetCount === null ? "dataset:-" : "dataset:" + datasetCount;
+  const photoText = photoSceneCount === null ? "photo:-" : "photo:" + photoSceneCount;
+  const pcText = pointcloudCount === null ? "pointcloud:-" : "pointcloud:" + pointcloudCount;
+  return sceneText + " | " + dsText + " | " + photoText + " | " + pcText;
+}
+
+function buildPointcloudSummary(data, dashboardUrl, typeTextFn, limit) {
+  const obj = toObject(data);
+  const summary = toObject(obj.summary);
+  const maxItems = typeof limit === "number" ? limit : 8;
+  const items = Array.isArray(obj.items) ?
+    obj.items.map((item) => normalizePointcloudItem(item, dashboardUrl, typeTextFn)) :
+    [];
+  const count = pickNumber(summary, ["count"]);
+  const totalSize = pickString(summary, ["total_size"]);
+  const latest = toObject(summary.latest);
+  const sceneCount = summary.scenes && typeof summary.scenes === "object" ? Object.keys(summary.scenes).length : 0;
+  const countText = count === null ? "文件数:-" : "文件数:" + count;
+  const sizeText = totalSize ? "总大小:" + totalSize : "总大小:-";
+  const latestText = latest && latest.name ? "最新:" + latest.name : "最新:-";
+  return {
+    text: countText + " | " + sizeText + " | 场景:" + sceneCount + " | " + clipText(latestText, 80),
+    items: items.slice(0, maxItems)
+  };
+}
+
+function buildJobsData(data, statusTextFn, limit) {
+  const obj = toObject(data);
+  const summary = toObject(obj.summary);
+  const maxItems = typeof limit === "number" ? limit : 8;
+  const items = Array.isArray(obj.items) ?
+    obj.items.map((item, index) => normalizeJobItem(item, index, statusTextFn)) :
+    [];
+  const totalCount = pickNumber(summary, ["count"]);
+  const queuedCount = pickNumber(summary, ["queued"]);
+  const runningCount = pickNumber(summary, ["running"]);
+  const completedCount = pickNumber(summary, ["completed"]);
+  const failedCount = pickNumber(summary, ["failed"]);
+  const countText = totalCount === null ? "任务:-" : "任务:" + totalCount;
+  const queuedText = queuedCount === null ? "排队:-" : "排队:" + queuedCount;
+  const runningText = runningCount === null ? "运行:-" : "运行:" + runningCount;
+  const completedText = completedCount === null ? "完成:-" : "完成:" + completedCount;
+  const failedText = failedCount === null ? "失败:-" : "失败:" + failedCount;
+  return {
+    text: countText + " | " + queuedText + " | " + runningText + " | " + completedText + " | " + failedText,
+    items: items.slice(0, maxItems)
+  };
+}
+
+function buildLogsData(data, limit) {
+  const obj = toObject(data);
+  const lines = Array.isArray(obj.lines) ? obj.lines : [];
+  const maxItems = typeof limit === "number" ? limit : 5;
+  if (lines.length === 0) {
+    return { text: "lines:0 | latest:-", items: [] };
+  }
+  const latestLine = lines[lines.length - 1];
+  return {
+    text: "lines:" + lines.length + " | latest:" + clipText(latestLine, 100),
+    items: lines.slice(-maxItems).map((line, index) => ({
+      id: String(index),
+      text: clipText(line, 140)
+    }))
+  };
+}
+
 module.exports = {
   asText,
+  buildJobsData,
+  buildLogsData,
+  buildPointcloudSummary,
+  buildScenesSummaryText,
+  buildUploadStatsText,
+  buildUploadsSummaryText,
   canCancelJobStatus,
   canUploadByPhase,
   clipText,

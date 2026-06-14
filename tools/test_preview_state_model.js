@@ -83,6 +83,92 @@ function testPointcloudNormalization() {
   console.log("[OK] preview state pointcloud normalization");
 }
 
+function testSummaryBuilders() {
+  assert.strictEqual(
+    model.buildUploadStatsText({ uploaded_files: "3", uploaded_bytes: 1536 }),
+    "文件数: 3 | 字节数: 1.50 KB",
+  );
+  assert.strictEqual(
+    model.buildUploadsSummaryText({
+      count: "2",
+      latest_mtime: "2026-06-14 12:00:00",
+      watch_dir: "/root/autodl-tmp/input_images",
+    }),
+    "count:2 | latest:2026-06-14 12:00:00 | dir:/root/autodl-tmp/input_images",
+  );
+  assert.strictEqual(
+    model.buildScenesSummaryText({
+      latest_scene: "scene_a",
+      dataset_count: "2",
+      photo_scene_count: 1,
+      pointcloud_count: "4",
+    }),
+    "latest:scene_a | dataset:2 | photo:1 | pointcloud:4",
+  );
+
+  const pointcloudSummary = model.buildPointcloudSummary(
+    {
+      summary: {
+        count: 2,
+        total_size: "3.00 MB",
+        latest: { name: "scene_gaussian_clipped.ply" },
+        scenes: { scene_a: 2 },
+      },
+      items: [
+        {
+          id: "pc_1",
+          scene: "scene_a",
+          variant: "gaussian",
+          name: "scene_gaussian_clipped.ply",
+          size_bytes: 2048,
+          download_url: "/download/pc_1",
+        },
+        {
+          id: "pc_2",
+          scene: "scene_a",
+          variant: "downsampled",
+          name: "scene_downsampled.ply",
+          size_bytes: 1024,
+          download_url: "/download/pc_2",
+        },
+      ],
+    },
+    "https://dashboard.example",
+    (obj) => "type:" + obj.variant,
+    1,
+  );
+  assert.strictEqual(
+    pointcloudSummary.text,
+    "文件数:2 | 总大小:3.00 MB | 场景:1 | 最新:scene_gaussian_clipped.ply",
+  );
+  assert.strictEqual(pointcloudSummary.items.length, 1);
+  assert.strictEqual(pointcloudSummary.items[0].typeText, "type:gaussian");
+
+  const jobs = model.buildJobsData(
+    {
+      summary: { count: 2, queued: 1, running: 1, completed: 0, failed: 0 },
+      items: [
+        { id: "job_a", status: "queued", image_count: 60 },
+        { id: "job_b", status: "running", image_count: 70 },
+      ],
+    },
+    (status) => "label:" + status,
+    1,
+  );
+  assert.strictEqual(jobs.text, "任务:2 | 排队:1 | 运行:1 | 完成:0 | 失败:0");
+  assert.strictEqual(jobs.items.length, 1);
+  assert.strictEqual(jobs.items[0].statusText, "label:queued");
+
+  const logs = model.buildLogsData({ lines: ["old", "middle", "latest"] }, 2);
+  assert.strictEqual(logs.text, "lines:3 | latest:latest");
+  assert.deepStrictEqual(logs.items, [
+    { id: "0", text: "middle" },
+    { id: "1", text: "latest" },
+  ]);
+  assert.deepStrictEqual(model.buildLogsData({ lines: [] }), { text: "lines:0 | latest:-", items: [] });
+  console.log("[OK] preview state summary builders");
+}
+
 function testPhasePolicy() {
   ["idle", "input", "upload", "stopped", "unknown"].forEach((phase) => {
     assert.strictEqual(model.canUploadByPhase(phase), true);
@@ -102,6 +188,7 @@ function main() {
   testBasics();
   testJobNormalization();
   testPointcloudNormalization();
+  testSummaryBuilders();
   testPhasePolicy();
   console.log("[OK] preview state model checks passed");
 }
