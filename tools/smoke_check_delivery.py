@@ -25,6 +25,7 @@ PYTHON_FILES = [
     ROOT / "tools" / "smoke_check_delivery.py",
     ROOT / "tools" / "api_contract_check.py",
     ROOT / "tools" / "autodl_preflight_check.py",
+    ROOT / "tools" / "test_frontend_config.py",
     ROOT / "tools" / "test_pipeline_models.py",
     ROOT / "tools" / "test_pointcloud_downloads.py",
 ]
@@ -112,6 +113,7 @@ def check_required_text() -> None:
         "smoke_check_delivery.py",
         "api_contract_check.py",
         "autodl_preflight_check.py",
+        "test_frontend_config.py",
         "test_pipeline_models.py",
         "test_pointcloud_downloads.py",
         "6008",
@@ -240,6 +242,19 @@ def check_pipeline_model_tests() -> None:
     print(result.stdout.rstrip())
 
 
+def check_frontend_config_tests() -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "test_frontend_config.py")],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        fail(f"frontend config tests failed\n{result.stdout}\n{result.stderr}")
+    print(result.stdout.rstrip())
+
+
 def check_pointcloud_download_tests() -> None:
     result = subprocess.run(
         [sys.executable, str(ROOT / "tools" / "test_pointcloud_downloads.py")],
@@ -315,6 +330,7 @@ def main() -> None:
     check_frontend_queue_entrypoints()
     check_frontend_capture_copy()
     check_api_contract_script()
+    check_frontend_config_tests()
     check_pipeline_model_tests()
     check_pointcloud_download_tests()
     check_job_queue_smoke()

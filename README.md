@@ -336,6 +336,7 @@ scene_name/
 ```bash
 python tools/api_contract_check.py
 python tools/autodl_preflight_check.py --offline
+python tools/test_frontend_config.py
 python tools/test_pipeline_models.py
 python tools/test_pointcloud_downloads.py
 python tools/smoke_check_delivery.py
