@@ -36,6 +36,12 @@ from services.pointcloud_index import (
     under_allowed_roots as is_under_allowed_roots,
     write_pointcloud_zip,
 )
+from services.config_model import (
+    get_config_bool as get_config_bool_from_values,
+    get_config_path as get_config_path_from_values,
+    read_config_file,
+    write_config_file,
+)
 from services.progress_model import build_phase_status, extract_current_run_logs, parse_progress
 from services.upload_model import (
     build_upload_filename,
@@ -176,27 +182,11 @@ def require_dashboard_token(x_auth_token: str = Header(default="", alias="X-Auth
 
 
 def read_env_file() -> Dict[str, str]:
-    values = DEFAULT_CONFIG.copy()
-    if not ENV_FILE.exists():
-        return values
-    for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        if key in values:
-            values[key] = value.strip()
-    return values
+    return read_config_file(ENV_FILE, DEFAULT_CONFIG)
 
 
 def write_env_file(values: Dict[str, str]) -> None:
-    lines: List[str] = [
-        "# Auto-managed by backend_dashboard.py",
-    ]
-    for key in EDITABLE_KEYS:
-        lines.append(f"{key}={values.get(key, DEFAULT_CONFIG[key])}")
-    ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_config_file(ENV_FILE, values, DEFAULT_CONFIG, EDITABLE_KEYS)
 
 
 def process_alive(pid: int) -> bool:
@@ -266,16 +256,11 @@ def list_images(directory: Path) -> List[Path]:
 
 
 def get_config_path(config_key: str, fallback: Path) -> Path:
-    values = read_env_file()
-    return Path(values.get(config_key, str(fallback))).resolve()
+    return get_config_path_from_values(read_env_file(), config_key, fallback)
 
 
 def get_config_bool(config_key: str, default: bool) -> bool:
-    values = read_env_file()
-    value = values.get(config_key, "").strip().lower()
-    if not value:
-        return default
-    return value in {"1", "true", "yes", "y", "on"}
+    return get_config_bool_from_values(read_env_file(), config_key, default)
 
 
 def read_pipeline_state() -> Dict[str, object]:

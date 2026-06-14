@@ -48,6 +48,12 @@ def write_file(path: Path, content: bytes, mtime_ns: int) -> Path:
     return path
 
 
+def set_dir_mtime(path: Path, mtime_ns: int) -> None:
+    import os
+
+    os.utime(path, ns=(mtime_ns, mtime_ns))
+
+
 def test_image_listing_and_scene_name() -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
         root = Path(tmp_dir)
@@ -91,6 +97,7 @@ def test_snapshot_latest_and_prune() -> None:
             child = scene_root / name
             child.mkdir(parents=True, exist_ok=True)
             write_file(child / "marker.txt", name.encode("utf-8"), (index + 1) * 1_000_000_000)
+            set_dir_mtime(child, (index + 1) * 1_000_000_000)
         deleted = prune_child_dirs(scene_root, keep=2, protected_name="protected")
         assert_equal(deleted, 2, "prune should delete older unprotected dirs")
         assert_true((scene_root / "new").exists(), "newest dir should be kept")
