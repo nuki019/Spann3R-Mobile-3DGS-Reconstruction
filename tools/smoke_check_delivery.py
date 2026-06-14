@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 PYTHON_FILES = [
     ROOT / "backend" / "services" / "backend_dashboard.py",
+    ROOT / "backend" / "services" / "pointcloud_index.py",
     ROOT / "backend" / "services" / "upload_server.py",
     ROOT / "backend" / "pipeline" / "job_queue.py",
     ROOT / "backend" / "pipeline" / "task_state.py",
@@ -24,6 +25,7 @@ PYTHON_FILES = [
     ROOT / "tools" / "api_contract_check.py",
     ROOT / "tools" / "autodl_preflight_check.py",
     ROOT / "tools" / "test_pipeline_models.py",
+    ROOT / "tools" / "test_pointcloud_downloads.py",
 ]
 
 JS_FILES = [
@@ -110,6 +112,7 @@ def check_required_text() -> None:
         "api_contract_check.py",
         "autodl_preflight_check.py",
         "test_pipeline_models.py",
+        "test_pointcloud_downloads.py",
         "6008",
         "点云下载",
         "RESTART_QUEUE_CLEANUP",
@@ -215,6 +218,19 @@ def check_pipeline_model_tests() -> None:
     print(result.stdout.rstrip())
 
 
+def check_pointcloud_download_tests() -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "test_pointcloud_downloads.py")],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        fail(f"pointcloud download tests failed\n{result.stdout}\n{result.stderr}")
+    print(result.stdout.rstrip())
+
+
 def check_job_queue_smoke() -> None:
     sys.path.insert(0, str(ROOT / "backend"))
     from pipeline.job_queue import (  # pylint: disable=import-outside-toplevel
@@ -277,6 +293,7 @@ def main() -> None:
     check_frontend_queue_entrypoints()
     check_api_contract_script()
     check_pipeline_model_tests()
+    check_pointcloud_download_tests()
     check_job_queue_smoke()
     print("[OK] delivery smoke checks passed")
 

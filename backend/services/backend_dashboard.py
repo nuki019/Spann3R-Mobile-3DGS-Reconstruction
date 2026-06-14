@@ -1,4 +1,3 @@
-import hashlib
 import json
 import os
 import re
@@ -8,9 +7,7 @@ import signal
 import subprocess
 import sys
 import time
-import tempfile
 import uuid
-import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -28,6 +25,19 @@ from pipeline.job_queue import (
     summarize_jobs,
 )
 from pipeline.task_state import PipelineStateStore, build_sections
+from services.pointcloud_index import (
+    DEFAULT_POINTCLOUD_ROOTS,
+    discover_pointclouds as discover_pointcloud_items,
+    filter_pointclouds_by_processed,
+    find_scene_gaussian_files as find_scene_gaussian_files_for_items,
+    index_by_id as index_pointclouds_by_id,
+    infer_pointcloud_variant as infer_pointcloud_variant_for_path,
+    parse_pointcloud_roots,
+    pick_preferred_pointcloud as pick_preferred_pointcloud_item,
+    summarize_pointclouds,
+    under_allowed_roots as is_under_allowed_roots,
+    write_pointcloud_zip,
+)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
 UPLOAD_CHUNK_SIZE = 1024 * 1024
@@ -52,16 +62,10 @@ PIPELINE_JOB_ROOT = Path(os.getenv("PIPELINE_JOB_ROOT", "/root/autodl-tmp/pipeli
 SCENE_DATA_ROOT = Path(os.getenv("SCENE_DATA_ROOT", "/root/autodl-tmp/gs_train/scenes")).resolve()
 TEST_PHOTO_ROOT = Path(os.getenv("TEST_PHOTO_ROOT", str(ROOT_DIR / "test_photo_sets"))).resolve()
 
-DEFAULT_POINTCLOUD_ROOTS = [
-    "/root/autodl-tmp/gs_train",
-    "/root/autodl-tmp/Spann3R/output/demo",
-    "/root/autodl-tmp/Spann3R/output",
-]
-POINTCLOUD_ROOTS = [
-    Path(item.strip()).resolve()
-    for item in os.getenv("POINTCLOUD_ROOTS", ",".join(DEFAULT_POINTCLOUD_ROOTS)).split(",")
-    if item.strip()
-]
+POINTCLOUD_ROOTS = parse_pointcloud_roots(
+    os.getenv("POINTCLOUD_ROOTS", ""),
+    DEFAULT_POINTCLOUD_ROOTS,
+)
 
 DEFAULT_CONFIG: Dict[str, str] = {
     "MIN_IMG_COUNT": "60",
@@ -355,68 +359,15 @@ def merge_state_progress(
 
 
 def under_allowed_roots(path: Path) -> bool:
-    resolved = path.resolve()
-    for root in POINTCLOUD_ROOTS:
-        try:
-            resolved.relative_to(root)
-            return True
-        except ValueError:
-            continue
-    return False
+    return is_under_allowed_roots(path, POINTCLOUD_ROOTS)
 
 
 def infer_pointcloud_variant(file_path: Path) -> str:
-    path_text = str(file_path).lower()
-    name = file_path.name.lower()
-    if "_gaussian_" in name or "gaussian_export" in path_text:
-        return "gaussian"
-    if name.startswith("point_cloud") and "splatfacto" in path_text:
-        return "gaussian"
-    if "_downsampled" in name:
-        return "downsampled"
-    if "_raw" in name:
-        return "raw"
-    if "_init" in name:
-        return "train"
-    return "other"
-
-
-def infer_scene_name(file_path: Path) -> str:
-    parts = file_path.resolve().parts
-    for marker in ("scenes", "outputs", "demo"):
-        if marker in parts:
-            index = parts.index(marker)
-            if index + 1 < len(parts):
-                return parts[index + 1]
-    return file_path.parent.name
+    return infer_pointcloud_variant_for_path(file_path)
 
 
 def discover_pointclouds() -> List[Dict[str, str]]:
-    files: List[Path] = []
-    for root in POINTCLOUD_ROOTS:
-        if root.exists():
-            files.extend(root.rglob("*.ply"))
-    files = sorted(files, key=lambda p: p.stat().st_mtime_ns, reverse=True)
-
-    payload: List[Dict[str, str]] = []
-    for file_path in files:
-        if not under_allowed_roots(file_path):
-            continue
-        stat = file_path.stat()
-        file_id = hashlib.sha1(str(file_path).encode("utf-8")).hexdigest()[:16]
-        payload.append(
-            {
-                "id": file_id,
-                "name": file_path.name,
-                "scene": infer_scene_name(file_path),
-                "variant": infer_pointcloud_variant(file_path),
-                "path": str(file_path),
-                "size_bytes": str(stat.st_size),
-                "mtime": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
-                "download_url": f"/download/{file_id}",
-            }
-        )
-    return payload
+    return discover_pointcloud_items(POINTCLOUD_ROOTS)
 
 
 def pick_preferred_pointcloud(
@@ -424,118 +375,23 @@ def pick_preferred_pointcloud(
     prefer: str = "gaussian",
     strict: bool = False,
 ) -> Optional[Dict[str, str]]:
-    if not items:
-        return None
-
-    prefer = (prefer or "gaussian").strip().lower()
-    if strict:
-        order_map = {
-            "gaussian": ("gaussian",),
-            "downsampled": ("downsampled",),
-            "train": ("train",),
-            "raw": ("raw",),
-            "other": ("other",),
-            "any": ("gaussian", "downsampled", "train", "raw", "other"),
-        }
-    else:
-        order_map = {
-            "gaussian": ("gaussian", "downsampled", "train", "raw", "other"),
-            "downsampled": ("downsampled", "train", "raw", "gaussian", "other"),
-            "train": ("train", "downsampled", "raw", "gaussian", "other"),
-            "raw": ("raw", "downsampled", "train", "gaussian", "other"),
-            "any": ("gaussian", "downsampled", "train", "raw", "other"),
-        }
-    variant_order = order_map.get(prefer, order_map["gaussian"])
-
-    latest_scene = read_latest_scene()
-    scoped = [item for item in items if item["scene"] == latest_scene] if latest_scene else []
-    ordered_groups = [scoped, items] if scoped else [items]
-
-    for group in ordered_groups:
-        for preferred_variant in variant_order:
-            for item in group:
-                if item.get("variant") == preferred_variant:
-                    return item
-    if strict:
-        return None
-    return items[0]
-
-
-def index_by_id() -> Dict[str, Path]:
-    mapping: Dict[str, Path] = {}
-    for item in discover_pointclouds():
-        mapping[item["id"]] = Path(item["path"])
-    return mapping
-
-
-def summarize_pointclouds(items: List[Dict[str, str]]) -> Dict[str, object]:
-    total_size = 0
-    scenes: Dict[str, int] = {}
-    for item in items:
-        try:
-            total_size += int(item.get("size_bytes") or 0)
-        except ValueError:
-            pass
-        scene = item.get("scene") or "-"
-        scenes[scene] = scenes.get(scene, 0) + 1
-    return {
-        "count": len(items),
-        "total_size": human_size(total_size),
-        "latest": items[0] if items else None,
-        "scenes": scenes,
-    }
-
-
-def human_size(size_bytes: int) -> str:
-    value = float(max(size_bytes, 0))
-    for unit in ("B", "KB", "MB", "GB"):
-        if value < 1024 or unit == "GB":
-            if unit == "B":
-                return f"{int(value)} {unit}"
-            return f"{value:.2f} {unit}"
-        value /= 1024
-
-
-def is_processed_pointcloud(item: Dict[str, str]) -> bool:
-    name = (item.get("name") or "").lower()
-    return (
-        "clipped" in name
-        or "downsampled" in name
-        or name.endswith("_init.ply")
+    return pick_preferred_pointcloud_item(
+        items,
+        prefer=prefer,
+        strict=strict,
+        latest_scene=read_latest_scene(),
     )
 
 
-def filter_pointclouds_by_processed(
-    items: List[Dict[str, str]],
-    processed: Optional[bool],
-) -> List[Dict[str, str]]:
-    if processed is None:
-        return items
-    return [item for item in items if is_processed_pointcloud(item) == processed]
+def index_by_id() -> Dict[str, Path]:
+    return index_pointclouds_by_id(discover_pointclouds())
 
 
 def make_zip_response(items: List[Dict[str, str]], archive_name: str) -> FileResponse:
     if not items:
         raise HTTPException(status_code=404, detail="未找到可打包点云")
 
-    tmp = tempfile.NamedTemporaryFile(prefix="pointclouds_", suffix=".zip", delete=False)
-    tmp_path = Path(tmp.name)
-    tmp.close()
-
-    used_names: Dict[str, int] = {}
-    with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for item in items:
-            path = Path(item["path"])
-            if not path.exists() or not under_allowed_roots(path):
-                continue
-            arcname = f"{item.get('scene') or 'scene'}_{path.name}"
-            count = used_names.get(arcname, 0)
-            used_names[arcname] = count + 1
-            if count:
-                stem = Path(arcname).stem
-                suffix = Path(arcname).suffix
-                arcname = f"{stem}_{count}{suffix}"
-            archive.write(path, arcname=arcname)
+    tmp_path = write_pointcloud_zip(items, POINTCLOUD_ROOTS)
 
     return FileResponse(
         tmp_path,
@@ -546,24 +402,7 @@ def make_zip_response(items: List[Dict[str, str]], archive_name: str) -> FileRes
 
 
 def find_scene_gaussian_files(scene_name: str) -> Dict[str, str]:
-    if not scene_name:
-        return {}
-    scene_items = [
-        item for item in discover_pointclouds()
-        if item.get("scene") == scene_name and item.get("variant") == "gaussian"
-    ]
-    raw = ""
-    clipped = ""
-    for item in scene_items:
-        name = (item.get("name") or "").lower()
-        if not clipped and "clipped" in name:
-            clipped = item.get("name") or ""
-        if not raw and ("_gaussian_raw" in name or name == "splat.ply"):
-            raw = item.get("name") or ""
-    return {
-        "raw": raw,
-        "clipped": clipped,
-    }
+    return find_scene_gaussian_files_for_items(scene_name, discover_pointclouds())
 
 
 def discover_uploaded_images(limit: int = 200) -> List[Dict[str, str]]:
