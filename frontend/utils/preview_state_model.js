@@ -298,6 +298,117 @@ function buildLogsData(data, limit) {
   };
 }
 
+function settledValue(result, fallback) {
+  return result && result.status === "fulfilled" ? result.value : fallback;
+}
+
+function isRejected(result) {
+  return !result || result.status === "rejected";
+}
+
+function buildFastPollData(resultList, options) {
+  const results = Array.isArray(resultList) ? resultList : [];
+  const settings = toObject(options);
+  const dashboardPayload = settledValue(results[0], {});
+  const uploadProxyPayload = toObject(settledValue(results[1], {}));
+  const dashboardHealthOk = Boolean(dashboardPayload && typeof dashboardPayload === "object" && dashboardPayload.status === "ok");
+  const uploadHealthOk = Boolean(uploadProxyPayload && uploadProxyPayload.status === "ok");
+  const uploadAllow = typeof uploadProxyPayload.allow_upload === "boolean" ? uploadProxyPayload.allow_upload : undefined;
+  const queueEnabled = Boolean(uploadProxyPayload.queue_enabled);
+  const uploadStats = results[2] && results[2].status === "fulfilled" ? buildUploadStatsText(results[2].value) : "拉取失败";
+  const statusData = results[3] && results[3].status === "fulfilled" ? parseStatus(results[3].value) : {
+    runningText: "拉取失败",
+    pidText: "-",
+    queueText: "-",
+    jobText: "-"
+  };
+  const progressData = results[4] && results[4].status === "fulfilled" ? parseProgress(results[4].value) : {
+    phaseKey: "unknown",
+    stageText: "拉取失败",
+    stepText: "-",
+    sceneNameText: "-",
+    lossText: "-",
+    uploadedImagesText: "-",
+    percentText: "-"
+  };
+  const phaseState = getPhaseState(progressData.phaseKey, {
+    uploadHealthy: uploadHealthOk,
+    dashboardHealthy: dashboardHealthOk,
+    uploadAllow: uploadAllow,
+    queueEnabled: queueEnabled,
+    hasPointclouds: Boolean(settings.hasPointclouds)
+  });
+  const backendPhases = buildBackendPhases(progressData, {
+    uploadHealthOk: uploadHealthOk,
+    dashboardHealthOk: dashboardHealthOk,
+    statusData: statusData,
+    uploadAllow: uploadAllow,
+    queueEnabled: queueEnabled,
+    hasPointclouds: Boolean(settings.hasPointclouds)
+  });
+
+  return {
+    failed: isRejected(results[0]) || isRejected(results[1]) || isRejected(results[3]) || isRejected(results[4]),
+    data: {
+      uploadHealthText: uploadHealthOk ? "正常" : "不可用",
+      dashboardHealthText: dashboardHealthOk ? "正常" : "异常",
+      uploadStatsText: uploadStats,
+      pipelineRunningText: statusData.runningText,
+      pipelinePidText: statusData.pidText,
+      pipelineQueueText: statusData.queueText,
+      pipelineJobText: statusData.jobText,
+      backendPhases: backendPhases,
+      phaseKey: phaseState.phaseKey,
+      phaseActionHint: phaseState.phaseActionHint,
+      phaseCanUpload: phaseState.phaseCanUpload,
+      phaseCanViewer: phaseState.phaseCanViewer,
+      phaseCanDownload: phaseState.phaseCanDownload,
+      pipelineStageText: progressData.stageText,
+      pipelineStepText: progressData.stepText,
+      pipelinePercentText: progressData.percentText,
+      pipelineLossText: progressData.lossText,
+      uploadedImagesText: progressData.uploadedImagesText,
+      sceneNameText: progressData.sceneNameText
+    }
+  };
+}
+
+function buildMediumPollData(resultList) {
+  const results = Array.isArray(resultList) ? resultList : [];
+  const logsData = results[0] && results[0].status === "fulfilled" ? buildLogsData(results[0].value) : { text: "拉取失败", items: [] };
+  return {
+    failed: results.some((item) => item.status === "rejected"),
+    data: {
+      logsSummaryText: logsData.text,
+      latestLogLines: logsData.items
+    }
+  };
+}
+
+function buildSlowPollData(resultList, options) {
+  const results = Array.isArray(resultList) ? resultList : [];
+  const settings = toObject(options);
+  const dashboardUrl = settings.dashboardUrl || "";
+  const statusTextFn = typeof settings.statusTextFn === "function" ? settings.statusTextFn : undefined;
+  const uploadsSummary = results[0] && results[0].status === "fulfilled" ? buildUploadsSummaryText(results[0].value) : "拉取失败";
+  const scenesSummary = results[1] && results[1].status === "fulfilled" ? buildScenesSummaryText(results[1].value) : "拉取失败";
+  const pointcloudData = results[2] && results[2].status === "fulfilled" ? buildPointcloudSummary(results[2].value, dashboardUrl) : { text: "拉取失败", items: [] };
+  const jobsData = results[3] && results[3].status === "fulfilled" ? buildJobsData(results[3].value, statusTextFn) : { text: "拉取失败", items: [] };
+  return {
+    failed: results.some((item) => item.status === "rejected"),
+    data: {
+      uploadsSummaryText: uploadsSummary,
+      scenesSummaryText: scenesSummary,
+      jobsSummaryText: jobsData.text,
+      jobList: jobsData.items,
+      jobsError: isRejected(results[3]) ? "任务队列拉取失败，请检查 /api/jobs" : "",
+      pointcloudSummaryText: pointcloudData.text,
+      pointcloudList: pointcloudData.items,
+      pointcloudError: isRejected(results[2]) ? "点云清单拉取失败，请检查 /api/pointclouds/summary" : ""
+    }
+  };
+}
+
 function parseStatus(data) {
   const obj = toObject(data);
   const pid = pickNumber(obj, ["pid"]);
@@ -529,10 +640,13 @@ function buildBackendPhases(progressData, options) {
 module.exports = {
   asText,
   buildBackendPhases,
+  buildFastPollData,
   buildJobsData,
   buildLogsData,
+  buildMediumPollData,
   buildPointcloudSummary,
   buildScenesSummaryText,
+  buildSlowPollData,
   buildUploadStatsText,
   buildUploadsSummaryText,
   canCancelJobStatus,

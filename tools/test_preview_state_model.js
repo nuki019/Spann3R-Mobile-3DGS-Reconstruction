@@ -308,6 +308,139 @@ function testBackendPhaseBuilders() {
   console.log("[OK] preview backend phase builders");
 }
 
+function testFastPollData() {
+  const poll = model.buildFastPollData(
+    [
+      { status: "fulfilled", value: { status: "ok" } },
+      { status: "fulfilled", value: { status: "ok", allow_upload: true, queue_enabled: true } },
+      { status: "fulfilled", value: { uploaded_files: 12, uploaded_bytes: 2048 } },
+      {
+        status: "fulfilled",
+        value: {
+          running: true,
+          pid: 4321,
+          queue_length: 1,
+          active_job: { id: "job_fast", created_at: "2026-06-14T11:00:00Z" },
+        },
+      },
+      {
+        status: "fulfilled",
+        value: {
+          phase: "gaussian",
+          step: "250",
+          percent: 0.25,
+          loss: "0.12",
+          uploaded_images: "66",
+          scene_name: "scene_fast",
+        },
+      },
+    ],
+    { hasPointclouds: false },
+  );
+  assert.strictEqual(poll.failed, false);
+  assert.strictEqual(poll.data.uploadHealthText, "正常");
+  assert.strictEqual(poll.data.dashboardHealthText, "正常");
+  assert.strictEqual(poll.data.uploadStatsText, "文件数: 12 | 字节数: 2.00 KB");
+  assert.strictEqual(poll.data.pipelineRunningText, "运行中");
+  assert.strictEqual(poll.data.pipelinePidText, "4321");
+  assert.strictEqual(poll.data.pipelineQueueText, "等待队列:1");
+  assert.strictEqual(poll.data.pipelineJobText, "job_fast | 2026-06-14T11:00:00Z");
+  assert.strictEqual(poll.data.phaseKey, "gaussian");
+  assert.strictEqual(poll.data.phaseCanUpload, true);
+  assert.strictEqual(poll.data.pipelinePercentText, "25.0%");
+  assert.deepStrictEqual(poll.data.backendPhases.map((item) => item.state), ["队列就绪", "已完成", "训练中", "生成中"]);
+
+  const failed = model.buildFastPollData([
+    { status: "rejected", reason: new Error("health failed") },
+    { status: "fulfilled", value: { status: "starting" } },
+    { status: "rejected", reason: new Error("stats failed") },
+    { status: "rejected", reason: new Error("status failed") },
+    { status: "fulfilled", value: { phase: "input" } },
+  ]);
+  assert.strictEqual(failed.failed, true);
+  assert.strictEqual(failed.data.dashboardHealthText, "异常");
+  assert.strictEqual(failed.data.uploadHealthText, "不可用");
+  assert.strictEqual(failed.data.uploadStatsText, "拉取失败");
+  assert.strictEqual(failed.data.pipelineRunningText, "拉取失败");
+  assert.strictEqual(failed.data.phaseKey, "input");
+  console.log("[OK] preview fast poll data");
+}
+
+function testMediumAndSlowPollData() {
+  const medium = model.buildMediumPollData([
+    { status: "fulfilled", value: { lines: ["one", "two", "three"] } },
+  ]);
+  assert.strictEqual(medium.failed, false);
+  assert.strictEqual(medium.data.logsSummaryText, "lines:3 | latest:three");
+  assert.deepStrictEqual(medium.data.latestLogLines, [
+    { id: "0", text: "one" },
+    { id: "1", text: "two" },
+    { id: "2", text: "three" },
+  ]);
+
+  const mediumFailed = model.buildMediumPollData([{ status: "rejected", reason: new Error("logs") }]);
+  assert.strictEqual(mediumFailed.failed, true);
+  assert.deepStrictEqual(mediumFailed.data, { logsSummaryText: "拉取失败", latestLogLines: [] });
+
+  const slow = model.buildSlowPollData(
+    [
+      {
+        status: "fulfilled",
+        value: { count: 2, latest_mtime: "2026-06-14 12:00:00", watch_dir: "/tmp/input" },
+      },
+      {
+        status: "fulfilled",
+        value: { latest_scene: "scene_a", dataset_count: 1, photo_scene_count: 1, pointcloud_count: 2 },
+      },
+      {
+        status: "fulfilled",
+        value: {
+          summary: { count: 1, total_size: "2.00 MB", latest: { name: "scene_a_gaussian_clipped.ply" }, scenes: { scene_a: 1 } },
+          items: [
+            {
+              id: "pc_a",
+              scene: "scene_a",
+              variant: "gaussian",
+              name: "scene_a_gaussian_clipped.ply",
+              size_bytes: 2048,
+              download_url: "/download/pc_a",
+            },
+          ],
+        },
+      },
+      {
+        status: "fulfilled",
+        value: {
+          summary: { count: 1, queued: 1, running: 0, completed: 0, failed: 0 },
+          items: [{ id: "job_a", status: "queued", image_count: 66 }],
+        },
+      },
+    ],
+    { dashboardUrl: "https://dashboard.example", statusTextFn: (status) => "job:" + status },
+  );
+  assert.strictEqual(slow.failed, false);
+  assert.strictEqual(slow.data.uploadsSummaryText, "count:2 | latest:2026-06-14 12:00:00 | dir:/tmp/input");
+  assert.strictEqual(slow.data.scenesSummaryText, "latest:scene_a | dataset:1 | photo:1 | pointcloud:2");
+  assert.strictEqual(slow.data.pointcloudList.length, 1);
+  assert.strictEqual(slow.data.pointcloudList[0].downloadUrl, "https://dashboard.example/download/pc_a");
+  assert.strictEqual(slow.data.jobsSummaryText, "任务:1 | 排队:1 | 运行:0 | 完成:0 | 失败:0");
+  assert.strictEqual(slow.data.jobList[0].statusText, "job:queued");
+  assert.strictEqual(slow.data.jobsError, "");
+  assert.strictEqual(slow.data.pointcloudError, "");
+
+  const slowFailed = model.buildSlowPollData([
+    { status: "rejected", reason: new Error("uploads") },
+    { status: "fulfilled", value: {} },
+    { status: "rejected", reason: new Error("pointclouds") },
+    { status: "rejected", reason: new Error("jobs") },
+  ]);
+  assert.strictEqual(slowFailed.failed, true);
+  assert.strictEqual(slowFailed.data.uploadsSummaryText, "拉取失败");
+  assert.strictEqual(slowFailed.data.pointcloudError, "点云清单拉取失败，请检查 /api/pointclouds/summary");
+  assert.strictEqual(slowFailed.data.jobsError, "任务队列拉取失败，请检查 /api/jobs");
+  console.log("[OK] preview medium/slow poll data");
+}
+
 function testPhasePolicy() {
   ["idle", "input", "upload", "stopped", "unknown"].forEach((phase) => {
     assert.strictEqual(model.canUploadByPhase(phase), true);
@@ -332,6 +465,8 @@ function main() {
   testSummaryBuilders();
   testStatusAndProgressParsing();
   testBackendPhaseBuilders();
+  testFastPollData();
+  testMediumAndSlowPollData();
   testPhasePolicy();
   console.log("[OK] preview state model checks passed");
 }

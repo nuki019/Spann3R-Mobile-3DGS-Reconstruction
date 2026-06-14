@@ -290,62 +290,15 @@ Page({
       this.requestGet(this.data.statusApiUrl),
       this.requestGet(this.data.progressApiUrl)
     ]).then((resultList) => {
-      const dashboardHealthOk = resultList[0].status === "fulfilled" &&
-        Boolean(resultList[0].value && typeof resultList[0].value === "object" && resultList[0].value.status === "ok");
-      const uploadProxyPayload = resultList[1].status === "fulfilled" ? toObject(resultList[1].value) : {};
-      const uploadHealthOk = Boolean(uploadProxyPayload && uploadProxyPayload.status === "ok");
-      const uploadAllow = typeof uploadProxyPayload.allow_upload === "boolean" ? uploadProxyPayload.allow_upload : undefined;
-      const queueEnabled = Boolean(uploadProxyPayload.queue_enabled);
-      const uploadHealth = uploadHealthOk ? "正常" : "不可用";
-      const dashboardHealth = dashboardHealthOk ? "正常" : "异常";
-      const uploadStats = resultList[2].status === "fulfilled" ? this.buildUploadStatsText(resultList[2].value) : "拉取失败";
-
-      const statusData = resultList[3].status === "fulfilled" ? this.parseStatus(resultList[3].value) : {
-        runningText: "拉取失败",
-        pidText: "-",
-        queueText: "-",
-        jobText: "-"
-      };
-      const progressData = resultList[4].status === "fulfilled" ? this.parseProgress(resultList[4].value) : {
-        phaseKey: "unknown",
-        stageText: "拉取失败",
-        stepText: "-",
-        sceneNameText: "-",
-        lossText: "-",
-        uploadedImagesText: "-",
-        percentText: "-"
-      };
-      const phaseState = this.getPhaseState(progressData.phaseKey, uploadHealthOk, dashboardHealthOk, uploadAllow, queueEnabled);
-      const backendPhases = this.buildBackendPhases(progressData, uploadHealthOk, dashboardHealthOk, statusData, uploadAllow, queueEnabled);
-
-      this.fastPollFailed = resultList[0].status === "rejected" ||
-        resultList[1].status === "rejected" ||
-        resultList[3].status === "rejected" ||
-        resultList[4].status === "rejected";
+      const pollData = previewState.buildFastPollData(resultList, {
+        hasPointclouds: this.data.pointcloudList.length > 0
+      });
+      this.fastPollFailed = pollData.failed;
       this.syncBackendError();
 
-      this.setData({
-        uploadHealthText: uploadHealth,
-        dashboardHealthText: dashboardHealth,
-        uploadStatsText: uploadStats,
-        pipelineRunningText: statusData.runningText,
-        pipelinePidText: statusData.pidText,
-        pipelineQueueText: statusData.queueText,
-        pipelineJobText: statusData.jobText,
-        backendPhases: backendPhases,
-        phaseKey: phaseState.phaseKey,
-        phaseActionHint: phaseState.phaseActionHint,
-        phaseCanUpload: phaseState.phaseCanUpload,
-        phaseCanViewer: phaseState.phaseCanViewer,
-        phaseCanDownload: phaseState.phaseCanDownload,
-        pipelineStageText: progressData.stageText,
-        pipelineStepText: progressData.stepText,
-        pipelinePercentText: progressData.percentText,
-        pipelineLossText: progressData.lossText,
-        uploadedImagesText: progressData.uploadedImagesText,
-        sceneNameText: progressData.sceneNameText,
+      this.setData(Object.assign({}, pollData.data, {
         lastUpdatedAt: formatTime(Date.now())
-      });
+      }));
     }).catch(() => {
       this.fastPollFailed = true;
       this.syncBackendError();
@@ -357,16 +310,14 @@ Page({
     return Promise.allSettled([
       this.requestGet(this.data.logsApiUrl)
     ]).then((resultList) => {
-      const logsData = resultList[0].status === "fulfilled" ? this.buildLogsData(resultList[0].value) : { text: "拉取失败", items: [] };
+      const pollData = previewState.buildMediumPollData(resultList);
 
-      this.mediumPollFailed = resultList.some((item) => item.status === "rejected");
+      this.mediumPollFailed = pollData.failed;
       this.syncBackendError();
 
-      this.setData({
-        logsSummaryText: logsData.text,
-        latestLogLines: logsData.items,
+      this.setData(Object.assign({}, pollData.data, {
         lastUpdatedAt: formatTime(Date.now())
-      });
+      }));
     }).catch(() => {
       this.mediumPollFailed = true;
       this.syncBackendError();
@@ -381,25 +332,17 @@ Page({
       this.requestGet(this.data.pointcloudsSummaryApiUrl),
       this.requestGet(this.data.jobsApiUrl)
     ]).then((resultList) => {
-      const uploadsSummary = resultList[0].status === "fulfilled" ? this.buildUploadsSummaryText(resultList[0].value) : "拉取失败";
-      const scenesSummary = resultList[1].status === "fulfilled" ? this.buildScenesSummaryText(resultList[1].value) : "拉取失败";
-      const pointcloudData = resultList[2].status === "fulfilled" ? this.buildPointcloudSummary(resultList[2].value) : { text: "拉取失败", items: [] };
-      const jobsData = resultList[3].status === "fulfilled" ? this.buildJobsData(resultList[3].value) : { text: "拉取失败", items: [] };
+      const pollData = previewState.buildSlowPollData(resultList, {
+        dashboardUrl: this.data.dashboardUrl,
+        statusTextFn: (status) => this.jobStatusText(status)
+      });
 
-      this.slowPollFailed = resultList.some((item) => item.status === "rejected");
+      this.slowPollFailed = pollData.failed;
       this.syncBackendError();
 
-      this.setData({
-        uploadsSummaryText: uploadsSummary,
-        scenesSummaryText: scenesSummary,
-        jobsSummaryText: jobsData.text,
-        jobList: jobsData.items,
-        jobsError: resultList[3].status === "rejected" ? "任务队列拉取失败，请检查 /api/jobs" : "",
-        pointcloudSummaryText: pointcloudData.text,
-        pointcloudList: pointcloudData.items,
-        pointcloudError: resultList[2].status === "rejected" ? "点云清单拉取失败，请检查 /api/pointclouds/summary" : "",
+      this.setData(Object.assign({}, pollData.data, {
         lastUpdatedAt: formatTime(Date.now())
-      });
+      }));
     }).catch(() => {
       this.slowPollFailed = true;
       this.syncBackendError();
