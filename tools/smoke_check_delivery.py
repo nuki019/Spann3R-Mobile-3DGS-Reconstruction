@@ -54,6 +54,7 @@ JS_FILES = [
     ROOT / "frontend" / "pages" / "preview" / "preview.js",
     ROOT / "frontend" / "utils" / "capture_state_model.js",
     ROOT / "frontend" / "utils" / "oss_upload_utils.js",
+    ROOT / "frontend" / "utils" / "phase_policy.js",
     ROOT / "frontend" / "utils" / "preview_state_model.js",
     ROOT / "tools" / "test_capture_state_model.js",
     ROOT / "tools" / "test_preview_state_model.js",

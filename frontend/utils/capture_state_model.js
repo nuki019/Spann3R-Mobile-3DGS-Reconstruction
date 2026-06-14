@@ -1,6 +1,4 @@
-function canUploadByPhase(phase) {
-  return phase === "idle" || phase === "input" || phase === "upload" || phase === "stopped" || phase === "unknown";
-}
+const { canUploadByPhase } = require("./phase_policy");
 
 function isUploadAllowed(phase, uploadHealthy, dashboardHealthy, uploadAllow) {
   if (!uploadHealthy) {

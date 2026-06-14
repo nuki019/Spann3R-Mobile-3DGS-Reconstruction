@@ -16,6 +16,7 @@ function testUploadPolicy() {
   ["idle", "input", "upload", "stopped", "unknown"].forEach((phase) => {
     assert.strictEqual(model.canUploadByPhase(phase), true);
   });
+  assert.strictEqual(model.canUploadByPhase(" INPUT "), true);
   ["spann3r", "gaussian", "export", "completed", "failed"].forEach((phase) => {
     assert.strictEqual(model.canUploadByPhase(phase), false);
   });

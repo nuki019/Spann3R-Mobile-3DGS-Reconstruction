@@ -1,3 +1,5 @@
+const phasePolicy = require("./phase_policy");
+
 function pickNumber(obj, keys) {
   if (!obj || typeof obj !== "object") {
     return null;
@@ -110,11 +112,11 @@ function withQuery(url, query) {
 }
 
 function canUploadByPhase(phase) {
-  return phase === "idle" || phase === "input" || phase === "upload" || phase === "stopped" || phase === "unknown";
+  return phasePolicy.canUploadByPhase(phase);
 }
 
 function canCancelJobStatus(status) {
-  return status === "queued" || status === "uploading" || status === "ready";
+  return phasePolicy.canCancelJobStatus(status);
 }
 
 function jobStatusClass(status) {
