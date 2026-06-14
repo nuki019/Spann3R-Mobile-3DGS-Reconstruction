@@ -22,6 +22,13 @@ from pipeline.job_queue import (  # noqa: E402
     sanitize_job_id,
     summarize_jobs,
 )
+from pipeline.job_policy import (  # noqa: E402
+    can_cancel_job_status,
+    can_upload_by_phase,
+    is_runnable_job_status,
+    next_status_after_upload,
+    summarize_job_statuses,
+)
 from pipeline.task_state import PipelineStateStore  # noqa: E402
 
 
@@ -38,6 +45,49 @@ def assert_equal(actual: object, expected: object, message: str) -> None:
 def assert_true(value: object, message: str) -> None:
     if not value:
         fail(message)
+
+
+def test_job_policy_model() -> None:
+    assert_true(is_runnable_job_status("queued"), "queued jobs should be runnable")
+    assert_true(is_runnable_job_status("uploading"), "uploading jobs should be runnable")
+    assert_true(is_runnable_job_status("ready"), "ready jobs should be runnable")
+    assert_true(not is_runnable_job_status("running"), "running jobs must not be runnable")
+
+    assert_true(can_cancel_job_status("queued"), "queued jobs should be cancellable")
+    assert_true(can_cancel_job_status("uploading"), "uploading jobs should be cancellable")
+    assert_true(can_cancel_job_status("ready"), "ready jobs should be cancellable")
+    assert_true(not can_cancel_job_status("running"), "running jobs must use pipeline stop")
+    assert_true(not can_cancel_job_status("completed"), "completed jobs must not be cancellable")
+    assert_true(not can_cancel_job_status("failed"), "failed jobs must not be cancellable")
+    assert_true(not can_cancel_job_status("stopped"), "stopped jobs must not be cancellable")
+
+    assert_equal(next_status_after_upload(""), "queued", "new uploads should queue jobs")
+    assert_equal(next_status_after_upload("ready"), "queued", "ready uploads should refresh as queued")
+    assert_equal(next_status_after_upload("running"), "running", "running jobs must stay running after late upload")
+    assert_equal(next_status_after_upload("completed"), "completed", "completed jobs must not reopen after upload")
+
+    for phase in ["idle", "input", "upload", "stopped", "unknown"]:
+        assert_true(can_upload_by_phase(phase), f"{phase} should allow legacy upload")
+    for phase in ["spann3r", "gaussian", "export", "completed", "failed"]:
+        assert_true(not can_upload_by_phase(phase), f"{phase} should block legacy upload")
+
+    summary = summarize_job_statuses(
+        [
+            {"status": "queued"},
+            {"status": "uploading"},
+            {"status": "ready"},
+            {"status": "running"},
+            {"status": "completed"},
+            {"status": "failed"},
+            {"status": "stopped"},
+        ]
+    )
+    assert_equal(summary["queued"], 3, "summary queued bucket should include runnable waiting statuses")
+    assert_equal(summary["running"], 1, "summary running count changed")
+    assert_equal(summary["completed"], 1, "summary completed count changed")
+    assert_equal(summary["failed"], 1, "summary failed count changed")
+    assert_equal(summary["stopped"], 1, "summary stopped count changed")
+    print("[OK] job policy model tests")
 
 
 def test_job_queue_model() -> None:
@@ -141,6 +191,8 @@ def test_job_queue_model() -> None:
         mark_job(queue_root, other_id, "stopped", "cancelled")
         runnable_ids = {str(job.get("id")) for job in list_runnable_jobs(queue_root)}
         assert_true(other_id not in runnable_ids, "stopped job must not be runnable")
+        summary = summarize_jobs(queue_root)
+        assert_equal(summary["stopped"], 1, "summary should count stopped jobs separately")
 
         jobs = list_jobs(queue_root)
         assert_true(all(job_dir(queue_root, str(job["id"])).exists() for job in jobs), "job dirs should exist")
@@ -197,6 +249,7 @@ def test_pipeline_state_model() -> None:
 
 
 def main() -> None:
+    test_job_policy_model()
     test_job_queue_model()
     test_pipeline_state_model()
     print("[OK] pipeline model tests passed")

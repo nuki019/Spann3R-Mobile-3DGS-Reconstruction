@@ -21,6 +21,7 @@ from pipeline.job_queue import (
     sanitize_job_id,
     summarize_jobs,
 )
+from pipeline.job_policy import can_cancel_job_status, can_upload_by_phase
 from pipeline.task_state import PipelineStateStore, build_sections
 from services.pointcloud_index import (
     DEFAULT_POINTCLOUD_ROOTS,
@@ -555,10 +556,6 @@ def current_phase_for_upload_gate() -> str:
     progress = parse_progress(logs)
     phase_info = build_phase_status(logs, running, progress)
     return str(phase_info.get("phase") or "unknown")
-
-
-def can_upload_by_phase(phase: str) -> bool:
-    return phase in {"idle", "input", "upload", "stopped", "unknown"}
 
 
 def upload_stats_payload() -> Dict[str, object]:
@@ -1407,7 +1404,7 @@ async def api_job_cancel(job_id: str, _: None = Depends(require_dashboard_token)
     job = next((item for item in list_jobs(queue_root, limit=1000) if item.get("id") == safe_id), None)
     if not job:
         raise HTTPException(status_code=404, detail=f"任务不存在: {safe_id}")
-    if str(job.get("status") or "") == "running":
+    if not can_cancel_job_status(job.get("status")):
         raise HTTPException(status_code=409, detail="运行中任务请使用停止训练")
     updated = mark_job(queue_root, safe_id, "stopped", "用户取消排队任务")
     return {"ok": True, "job": updated}

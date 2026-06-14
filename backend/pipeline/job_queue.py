@@ -4,6 +4,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from pipeline.job_policy import (
+    is_runnable_job_status,
+    next_status_after_upload,
+    summarize_job_statuses,
+)
+
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
 
@@ -91,7 +97,7 @@ def record_uploaded_frame(
     images = list_images(job_images_dir(queue_root, safe_id))
     current = read_job(queue_root, safe_id)
     current_status = str(current.get("status") or "")
-    next_status = current_status if current_status in {"running", "completed", "failed", "stopped"} else "queued"
+    next_status = next_status_after_upload(current_status)
     manifest_path = job_dir(queue_root, safe_id) / "upload_manifest.jsonl"
     manifest_row = {
         "filename": filename,
@@ -134,10 +140,7 @@ def list_jobs(queue_root: Path, limit: int = 200) -> List[Dict[str, object]]:
 
 
 def list_runnable_jobs(queue_root: Path) -> List[Dict[str, object]]:
-    return [
-        job for job in list_jobs(queue_root)
-        if str(job.get("status") or "") in {"queued", "uploading", "ready"}
-    ]
+    return [job for job in list_jobs(queue_root) if is_runnable_job_status(job.get("status"))]
 
 
 def mark_job(
@@ -165,16 +168,4 @@ def mark_job(
 
 
 def summarize_jobs(queue_root: Path) -> Dict[str, object]:
-    jobs = list_jobs(queue_root)
-    counts: Dict[str, int] = {}
-    for job in jobs:
-        status = str(job.get("status") or "unknown")
-        counts[status] = counts.get(status, 0) + 1
-    return {
-        "count": len(jobs),
-        "queued": counts.get("queued", 0) + counts.get("uploading", 0) + counts.get("ready", 0),
-        "running": counts.get("running", 0),
-        "completed": counts.get("completed", 0),
-        "failed": counts.get("failed", 0),
-        "by_status": counts,
-    }
+    return summarize_job_statuses(list_jobs(queue_root))

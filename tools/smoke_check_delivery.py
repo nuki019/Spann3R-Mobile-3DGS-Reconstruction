@@ -21,6 +21,7 @@ PYTHON_FILES = [
     ROOT / "backend" / "services" / "upload_model.py",
     ROOT / "backend" / "services" / "upload_server.py",
     ROOT / "backend" / "pipeline" / "command_model.py",
+    ROOT / "backend" / "pipeline" / "job_policy.py",
     ROOT / "backend" / "pipeline" / "job_queue.py",
     ROOT / "backend" / "pipeline" / "storage_model.py",
     ROOT / "backend" / "pipeline" / "task_state.py",
