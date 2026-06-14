@@ -24,8 +24,8 @@
         {{isIMUStable ? '稳定' : '请持稳'}}
       </view>
       <view class="status-title">双筛关键帧采集</view>
-      <view class="status-pill {{phaseAllowUpload ? 'ok' : 'idle'}}">
-        {{phaseAllowUpload ? '后端就绪' : '等待服务'}}
+      <view class="status-pill {{backendStatusClass}}">
+        {{backendStatusLabel}}
       </view>
     </view>
 
@@ -76,7 +76,7 @@
       <text wx:if="{{isUploading}}">{{uploadProgress}}%</text>
       <text wx:elif="{{isCapturing}}">采集中</text>
       <text wx:elif="{{validFrameCount === 0}}">无有效帧</text>
-      <text wx:elif="{{!phaseAllowUpload}}">等待服务</text>
+      <text wx:elif="{{!phaseAllowUpload}}">{{uploadBlockLabel}}</text>
       <text wx:else>上传</text>
     </button>
   </view>

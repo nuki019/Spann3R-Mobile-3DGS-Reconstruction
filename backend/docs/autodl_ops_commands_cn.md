@@ -16,6 +16,7 @@ cd /root/autodl-tmp/Spann3R
 ```bash
 curl -s http://127.0.0.1:6008/healthz
 curl -s http://127.0.0.1:6008/api/progress
+cat /root/autodl-tmp/Spann3R/logs/pipeline_state.json
 ps -ef | grep -E 'backend_4090|backend_dashboard|upload_server|ns-train' | grep -v grep
 ss -lntp | grep -E ':6006|:6008|:7006' || true
 ```
@@ -56,6 +57,7 @@ pkill -KILL -f 'ns-train|pipeline.backend_4090|services.upload_server' || true
 ## 4. 重启后端并回到可上传状态
 
 用于结束旧训练后重新采集、重新上传。上传图片默认保存在 `/root/autodl-tmp/input_images`，重启脚本会先处理旧上传文件。
+每次上传会同时追加 `_upload_manifest.jsonl`，用于记录帧序号、session、文件大小和保存时间；训练流程状态写入 `/root/autodl-tmp/Spann3R/logs/pipeline_state.json`。
 
 ```bash
 cd /root/autodl-tmp/Spann3R

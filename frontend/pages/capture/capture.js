@@ -53,6 +53,9 @@ Page({
     currentPhase: "unknown",
     phaseText: "未知",
     phaseAllowUpload: false,
+    backendStatusLabel: "等待服务",
+    backendStatusClass: "idle",
+    uploadBlockLabel: "等待服务",
     uploadHealthOk: false,
     dashboardHealthOk: false,
     phaseHint: "正在获取后端阶段和上传服务状态..."
@@ -127,8 +130,10 @@ Page({
       input: "input（可上传）",
       spann3r: "spann3r（重建中）",
       gaussian: "gaussian（训练/导出中）",
+      export: "export（点云导出中）",
       completed: "completed（可查看/下载）",
       stopped: "stopped（已停止）",
+      failed: "failed（失败）",
       idle: "idle（空闲）",
       unknown: "unknown（未知）"
     };
@@ -136,18 +141,20 @@ Page({
   },
 
   getPhaseHint: function(phase, uploadHealthy, dashboardHealthy) {
-    var gatewayHealthy = Boolean(uploadHealthy || dashboardHealthy);
     if (phase === "spann3r") {
       return "Spann3R 重建处理中，上传已禁用";
     }
-    if (phase === "gaussian" || phase === "completed") {
+    if (phase === "gaussian" || phase === "export" || phase === "completed") {
       return "当前6006通常为 Viewer 阶段，上传不可用";
     }
     if (this.isUploadAllowed(phase, uploadHealthy, dashboardHealthy)) {
       return "上传服务就绪，可调用 /upload";
     }
-    if (this.canUploadByPhase(phase) && !gatewayHealthy) {
-      return "健康检查未通过（请检查 uu 域名 /healthz 与网关转发）";
+    if (this.canUploadByPhase(phase) && dashboardHealthy && !uploadHealthy) {
+      return "状态服务已连通，但上传代理未就绪（检查 /upload-proxy/healthz）";
+    }
+    if (this.canUploadByPhase(phase) && !dashboardHealthy) {
+      return "健康检查未通过（请检查 uu 域名 /healthz）";
     }
     if (phase === "idle" || phase === "stopped") {
       return "可在6008启动流程；若健康检查为 ok 也可直接上传";
@@ -156,11 +163,80 @@ Page({
   },
 
   canUploadByPhase: function(phase) {
-    return phase === "idle" || phase === "input" || phase === "stopped" || phase === "unknown";
+    return phase === "idle" || phase === "input" || phase === "upload" || phase === "stopped" || phase === "unknown";
   },
 
   isUploadAllowed: function(phase, uploadHealthy, dashboardHealthy) {
-    return this.canUploadByPhase(phase) && Boolean(uploadHealthy || dashboardHealthy);
+    return this.canUploadByPhase(phase) && Boolean(uploadHealthy);
+  },
+
+  getBackendStatusLabel: function(phase, uploadHealthy, dashboardHealthy) {
+    if (this.isUploadAllowed(phase, uploadHealthy, dashboardHealthy)) {
+      return "后端就绪";
+    }
+    if (!uploadHealthy && !dashboardHealthy) {
+      return "等待服务";
+    }
+    if (this.canUploadByPhase(phase) && !uploadHealthy) {
+      return "等待上传服务";
+    }
+    if (phase === "spann3r") {
+      return "重建中";
+    }
+    if (phase === "gaussian") {
+      return "训练中";
+    }
+    if (phase === "export") {
+      return "导出中";
+    }
+    if (phase === "completed") {
+      return "已完成";
+    }
+    if (phase === "failed") {
+      return "失败";
+    }
+    return "暂不可传";
+  },
+
+  getBackendStatusClass: function(phase, uploadHealthy, dashboardHealthy) {
+    if (this.isUploadAllowed(phase, uploadHealthy, dashboardHealthy)) {
+      return "ok";
+    }
+    if (!uploadHealthy && !dashboardHealthy) {
+      return "idle";
+    }
+    if (this.canUploadByPhase(phase) && !uploadHealthy) {
+      return "warn";
+    }
+    if (phase === "spann3r" || phase === "gaussian" || phase === "export" || phase === "failed") {
+      return "warn";
+    }
+    return "idle";
+  },
+
+  getUploadBlockLabel: function(phase, uploadHealthy, dashboardHealthy) {
+    if (!uploadHealthy && !dashboardHealthy) {
+      return "等待服务";
+    }
+    if (this.canUploadByPhase(phase) && !uploadHealthy) {
+      return "等待上传服务";
+    }
+    if (phase === "spann3r") {
+      return "重建中";
+    }
+    if (phase === "gaussian") {
+      return "训练中";
+    }
+    if (phase === "export") {
+      return "导出中";
+    }
+    if (phase === "completed") {
+      return "已完成";
+    }
+    if (phase === "failed") {
+      return "失败";
+    }
+    return "暂不可传";
   },
 
   applyPhaseState: function(phase, uploadHealthy, dashboardHealthy) {
@@ -171,6 +247,9 @@ Page({
       currentPhase: normalizedPhase,
       phaseText: this.getPhaseText(normalizedPhase),
       phaseAllowUpload: this.isUploadAllowed(normalizedPhase, healthOk, dashboardOk),
+      backendStatusLabel: this.getBackendStatusLabel(normalizedPhase, healthOk, dashboardOk),
+      backendStatusClass: this.getBackendStatusClass(normalizedPhase, healthOk, dashboardOk),
+      uploadBlockLabel: this.getUploadBlockLabel(normalizedPhase, healthOk, dashboardOk),
       uploadHealthOk: healthOk,
       dashboardHealthOk: dashboardOk,
       phaseHint: this.getPhaseHint(normalizedPhase, healthOk, dashboardOk)
@@ -222,15 +301,39 @@ Page({
     });
   },
 
+  requestUploadProxyHealth: function() {
+    return new Promise(function(resolve, reject) {
+      wx.request({
+        url: BACKEND_LINKS.uploadProxyHealthUrl,
+        method: "GET",
+        timeout: 5000,
+        success: function(res) {
+          var statusCode = res && res.statusCode ? res.statusCode : 0;
+          if (statusCode < 200 || statusCode >= 300) {
+            resolve(false);
+            return;
+          }
+          var payload = res && res.data ? res.data : null;
+          var ok = Boolean(payload && typeof payload === "object" && payload.status === "ok");
+          resolve(ok);
+        },
+        fail: function(err) {
+          reject(err);
+        }
+      });
+    });
+  },
+
   refreshPhaseState: function(isSilent) {
     var that = this;
     return Promise.allSettled([
       this.requestProgressPhase(),
-      this.requestDashboardHealth()
+      this.requestDashboardHealth(),
+      this.requestUploadProxyHealth()
     ]).then(function(resultList) {
       var phase = resultList[0].status === "fulfilled" ? resultList[0].value : "unknown";
       var dashboardHealthy = resultList[1].status === "fulfilled" ? resultList[1].value : false;
-      var uploadHealthy = dashboardHealthy;
+      var uploadHealthy = resultList[2].status === "fulfilled" ? resultList[2].value : false;
       that.applyPhaseState(phase, uploadHealthy, dashboardHealthy);
       return {
         phase: phase,
@@ -644,18 +747,38 @@ Page({
     var frameIMU = this.getIMUDataByTs(frameTs);
     var imuStableAtCapture = this.data.isIMUStable;
 
-    this.persistFrameFile(tempImagePath).then(function(stablePath) {
-      // 使用临时图做清晰度计算，持久化路径用于上传与预览
-      that.processCapturedFrameWithBlurPath(stablePath, frameTs, frameIMU, tempImagePath, imuStableAtCapture);
-    }).catch(function(err) {
-      that.saveFailCounter += 1;
-      that.setData({
-        saveFailCount: that.saveFailCounter,
-        debugInfo: "saveFile失败，已回退临时路径"
-      });
-      console.warn("saveFile失败，回退临时路径", err && err.errMsg ? err.errMsg : err);
-      // 文件持久化失败时回退到临时路径，避免整帧丢失
-      that.processCapturedFrameWithBlurPath(tempImagePath, frameTs, frameIMU, tempImagePath, imuStableAtCapture);
+    wx.getFileInfo({
+      filePath: tempImagePath,
+      success: function(info) {
+        if (info && info.size > 0) {
+          that.processCapturedFrameWithBlurPath(tempImagePath, frameTs, frameIMU, tempImagePath, imuStableAtCapture);
+          return;
+        }
+        that.persistFrameFile(tempImagePath).then(function(stablePath) {
+          that.processCapturedFrameWithBlurPath(stablePath, frameTs, frameIMU, tempImagePath, imuStableAtCapture);
+        }).catch(function(err) {
+          that.saveFailCounter += 1;
+          that.setData({
+            saveFailCount: that.saveFailCounter,
+            debugInfo: "临时帧不可用，兜底保存失败"
+          });
+          console.warn("临时帧不可用，saveFile失败", err && err.errMsg ? err.errMsg : err);
+          that.processCapturedFrameWithBlurPath(tempImagePath, frameTs, frameIMU, tempImagePath, imuStableAtCapture);
+        });
+      },
+      fail: function() {
+        that.persistFrameFile(tempImagePath).then(function(stablePath) {
+          that.processCapturedFrameWithBlurPath(stablePath, frameTs, frameIMU, tempImagePath, imuStableAtCapture);
+        }).catch(function(err) {
+          that.saveFailCounter += 1;
+          that.setData({
+            saveFailCount: that.saveFailCounter,
+            debugInfo: "临时帧检查失败，已回退原路径"
+          });
+          console.warn("临时帧检查失败，saveFile失败", err && err.errMsg ? err.errMsg : err);
+          that.processCapturedFrameWithBlurPath(tempImagePath, frameTs, frameIMU, tempImagePath, imuStableAtCapture);
+        });
+      }
     });
   },
 
@@ -738,7 +861,7 @@ Page({
 
   stopAllCapture: function(options) {
     options = options || {};
-    var shouldSaveToAlbum = options.saveToAlbum !== false;
+    var shouldSaveToAlbum = options.saveToAlbum === true;
 
     if (this.captureTimer) {
       clearInterval(this.captureTimer);
@@ -747,10 +870,10 @@ Page({
     this.isProcessingFrame = false;
     this.setData({ isCapturing: false });
 
-    var validFrameList = this.validFrameListCache;
     if (!shouldSaveToAlbum) {
       return;
     }
+    var validFrameList = this.validFrameListCache;
     if (validFrameList.length > 0) {
       wx.showLoading({ title: "保存清晰有效帧到相册..." });
       this.saveFramesToAlbum(validFrameList, 0);

@@ -21,6 +21,7 @@ from pipeline.auto_gs import (
     terminate_conflicting_ns_train,
     wait_until_upload_stable,
 )
+from pipeline.task_state import PipelineStateStore
 
 
 def apply_default_env() -> None:
@@ -29,6 +30,7 @@ def apply_default_env() -> None:
         "TARGET_DATA_DIR": "/root/autodl-tmp/gs_train/auto_scene",
         "SCENE_DATA_ROOT": "/root/autodl-tmp/gs_train/scenes",
         "TEST_PHOTO_ROOT": "/root/autodl-tmp/Spann3R/test_photo_sets",
+        "ARCHIVE_DIR": "/root/autodl-tmp/input_images_archive",
         "SCENE_NAME_PREFIX": "scene",
         "UPLOAD_SAVE_DIR": "/root/autodl-tmp/input_images",
         "UPLOAD_PORT": "6006",
@@ -42,6 +44,10 @@ def apply_default_env() -> None:
         "STABLE_POLLS": "3",
         "POLL_INTERVAL_SEC": "4",
         "TRAIN_SPLIT_FRACTION": "0.95",
+        "NS_MAX_NUM_ITERATIONS": "1000",
+        "NS_STEPS_PER_SAVE": "1000",
+        "NS_QUIT_ON_TRAIN_COMPLETION": "true",
+        "NS_TRAIN_EXTRA_ARGS": "",
         "NS_OUTPUT_ROOT": "/root/autodl-tmp/Spann3R/outputs",
         "NS_EXPORT_AFTER_TRAIN": "true",
         "GAUSSIAN_EXPORT_SUBDIR": "gaussian_export",
@@ -50,7 +56,13 @@ def apply_default_env() -> None:
         "NS_EXPORT_EXTRA_ARGS": "",
         "RUN_ONCE": "true",
         "CLEAR_TARGET_BEFORE_RUN": "true",
+        "CLEAR_INPUT_AFTER_SNAPSHOT": "true",
         "ARCHIVE_INPUT": "false",
+        "MAX_SCENES_KEEP": "5",
+        "MAX_PHOTO_SETS_KEEP": "5",
+        "RESTART_UPLOAD_CLEANUP": "archive",
+        "RESTART_UPLOAD_ARCHIVE_KEEP": "5",
+        "PIPELINE_STATE_FILE": "/root/autodl-tmp/Spann3R/logs/pipeline_state.json",
         "OMP_NUM_THREADS": "1",
         "MKL_NUM_THREADS": "1",
         "NUMEXPR_NUM_THREADS": "1",
@@ -129,57 +141,133 @@ def main() -> None:
     apply_default_env()
 
     config = PipelineConfig.from_env()
+    state_store = PipelineStateStore()
     config.viewer_port = 6006
     upload_port = 6006
-
-    print("📌 4090 单端口后端模式：上传与 Viewer 都使用 6006（分阶段复用）")
-    stale_pids = terminate_conflicting_ns_train(upload_port)
-    if stale_pids:
-        print(f"🧹 上传阶段前已停止占用端口 {upload_port} 的旧训练进程: {stale_pids}")
-    if not wait_for_port_state(upload_port, should_listen=False, timeout_sec=10.0):
-        raise RuntimeError(f"端口 {upload_port} 仍被占用，无法启动上传服务。")
-    upload_server = start_upload_server(upload_port, config.spann3r_root)
+    job_seed = f"{config.scene_name_prefix}_{time.strftime('%Y%m%d_%H%M%S')}"
+    state_store.start_job(
+        job_seed,
+        phase="input",
+        message="等待上传稳定",
+        paths={
+            "watch_dir": str(config.watch_dir),
+            "scene_data_root": str(config.scene_data_root),
+            "test_photo_root": str(config.test_photo_root),
+            "archive_dir": str(config.archive_dir),
+        },
+        metrics={
+            "min_img_count": config.min_img_count,
+            "stable_polls": config.stable_polls,
+            "max_iterations": config.ns_max_num_iterations,
+        },
+    )
 
     try:
+        print("📌 4090 单端口后端模式：上传与 Viewer 都使用 6006（分阶段复用）")
+        stale_pids = terminate_conflicting_ns_train(upload_port)
+        if stale_pids:
+            print(f"🧹 上传阶段前已停止占用端口 {upload_port} 的旧训练进程: {stale_pids}")
+        if not wait_for_port_state(upload_port, should_listen=False, timeout_sec=10.0):
+            raise RuntimeError(f"端口 {upload_port} 仍被占用，无法启动上传服务。")
+        upload_server = start_upload_server(upload_port, config.spann3r_root)
+
         print("🧭 阶段切换: 输入监测")
-        images = wait_until_upload_stable(config)
-    finally:
-        stop_process(upload_server, "上传服务")
-    if not wait_for_port_state(upload_port, should_listen=False, timeout_sec=10.0):
-        raise RuntimeError(f"上传服务退出后端口 {upload_port} 仍被占用。")
+        try:
+            images = wait_until_upload_stable(config, state_store=state_store)
+        finally:
+            stop_process(upload_server, "上传服务")
+        if not wait_for_port_state(upload_port, should_listen=False, timeout_sec=10.0):
+            raise RuntimeError(f"上传服务退出后端口 {upload_port} 仍被占用。")
 
-    scene_name = build_scene_name(config, images)
-    scene_photo_dir = snapshot_uploaded_images(config, images, scene_name)
-    print("🧭 阶段切换: Spann3R 重建")
-    scene_output_dir = run_spann3r(config, scene_photo_dir, scene_name)
-
-    scene_target_dir = config.scene_data_root / scene_name
-    prepare_target_dataset(config, source_images_dir=scene_photo_dir, target_data_dir=scene_target_dir)
-    _, _, pointcloud_name = copy_point_clouds(scene_output_dir, scene_target_dir, scene_name)
-    run_conversion(
-        config,
-        scene_output_dir,
-        image_dir=scene_target_dir / "images",
-        output_json=scene_target_dir / "transforms.json",
-        ply_file_name=pointcloud_name,
-        npy_name=scene_name,
-    )
-    mark_latest_scene(config.scene_data_root, scene_name)
-    archive_input_images(config)
-
-    print(f"✅ 场景入库完成: {scene_target_dir}")
-    stale_pids = terminate_conflicting_ns_train(config.viewer_port, keep_data_dir=scene_target_dir)
-    if stale_pids:
-        print(f"🧹 训练阶段前已停止端口 {config.viewer_port} 的冲突训练进程: {stale_pids}")
-    if not wait_for_port_state(config.viewer_port, should_listen=False, timeout_sec=10.0):
-        raise RuntimeError(
-            f"端口 {config.viewer_port} 仍被其他服务占用，无法保证 Viewer 固定在该端口。"
+        scene_name = build_scene_name(config, images)
+        state_store.update(
+            job_id=scene_name,
+            scene_name=scene_name,
+            phase="input",
+            status="running",
+            message="上传稳定，已创建场景",
+            metrics={"uploaded_images": len(images)},
         )
-    print("🧭 阶段切换: Gaussian 训练/导出")
-    print("🔥 上传阶段完成，切换到训练 Viewer（6006）...")
-    train_start_timestamp = time.time()
-    run_command(build_ns_train_command(config, scene_target_dir))
-    export_gaussian_artifacts(config, scene_name, scene_target_dir, train_start_timestamp)
+        scene_photo_dir = snapshot_uploaded_images(config, images, scene_name)
+        state_store.update(paths={"scene_photo_dir": str(scene_photo_dir)})
+
+        print("🧭 阶段切换: Spann3R 重建")
+        state_store.update(
+            phase="spann3r",
+            status="running",
+            message="Spann3R 正在生成几何与相机位姿",
+        )
+        scene_output_dir = run_spann3r(config, scene_photo_dir, scene_name)
+
+        scene_target_dir = config.scene_data_root / scene_name
+        state_store.update(
+            paths={
+                "scene_output_dir": str(scene_output_dir),
+                "scene_data_dir": str(scene_target_dir),
+            },
+        )
+        prepare_target_dataset(config, source_images_dir=scene_photo_dir, target_data_dir=scene_target_dir)
+        raw_name, downsampled_name, pointcloud_name = copy_point_clouds(scene_output_dir, scene_target_dir, scene_name)
+        state_store.update(
+            artifacts={
+                "spann3r_raw": str(scene_target_dir / raw_name),
+                "spann3r_downsampled": str(scene_target_dir / downsampled_name),
+                "train_pointcloud": str(scene_target_dir / pointcloud_name),
+            },
+        )
+        run_conversion(
+            config,
+            scene_output_dir,
+            image_dir=scene_target_dir / "images",
+            output_json=scene_target_dir / "transforms.json",
+            ply_file_name=pointcloud_name,
+            npy_name=scene_name,
+        )
+        mark_latest_scene(config.scene_data_root, scene_name)
+        archive_summary = archive_input_images(config)
+        state_store.update(paths={"upload_cleanup": archive_summary})
+
+        print(f"✅ 场景入库完成: {scene_target_dir}")
+        stale_pids = terminate_conflicting_ns_train(config.viewer_port, keep_data_dir=scene_target_dir)
+        if stale_pids:
+            print(f"🧹 训练阶段前已停止端口 {config.viewer_port} 的冲突训练进程: {stale_pids}")
+        if not wait_for_port_state(config.viewer_port, should_listen=False, timeout_sec=10.0):
+            raise RuntimeError(
+                f"端口 {config.viewer_port} 仍被其他服务占用，无法保证 Viewer 固定在该端口。"
+            )
+        print("🧭 阶段切换: Gaussian 训练/导出")
+        print("🔥 上传阶段完成，切换到训练 Viewer（6006）...")
+        state_store.update(
+            phase="gaussian",
+            status="running",
+            message="3DGaussian 正在训练",
+            metrics={
+                "step": 0,
+                "loss": "",
+                "percent": 0,
+                "max_iterations": config.ns_max_num_iterations,
+            },
+            paths={"scene_data_dir": str(scene_target_dir)},
+        )
+        train_start_timestamp = time.time()
+        run_command(build_ns_train_command(config, scene_target_dir))
+        state_store.update(
+            phase="export",
+            status="running",
+            message="训练完成，正在导出 Gaussian 点云",
+            metrics={"step": config.ns_max_num_iterations, "percent": 100},
+        )
+        gaussian_artifacts = export_gaussian_artifacts(config, scene_name, scene_target_dir, train_start_timestamp)
+        state_store.update(
+            phase="completed",
+            status="completed",
+            message="训练与导出完成",
+            metrics={"step": config.ns_max_num_iterations, "percent": 100},
+            artifacts=gaussian_artifacts,
+        )
+    except Exception as error:
+        state_store.fail(error)
+        raise
 
 
 if __name__ == "__main__":

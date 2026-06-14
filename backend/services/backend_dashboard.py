@@ -7,15 +7,22 @@ import signal
 import subprocess
 import sys
 import time
+import tempfile
+import uuid
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
+
+from pipeline.task_state import PipelineStateStore, build_sections
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
+UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 LOG_DIR = ROOT_DIR / "logs"
@@ -26,7 +33,11 @@ PIPELINE_MODULE = "pipeline.backend_4090"
 PIPELINE_PID_FILE = LOG_DIR / "backend_4090.pid"
 PIPELINE_LOG_FILE = LOG_DIR / "backend_4090.log"
 ENV_FILE = ROOT_DIR / ".env.pipeline.4090"
+STATE_STORE = PipelineStateStore()
 DASHBOARD_AUTH_TOKEN = os.getenv("DASHBOARD_AUTH_TOKEN", "").strip()
+UPLOAD_AUTH_TOKEN = os.getenv("UPLOAD_AUTH_TOKEN", "").strip()
+UPLOAD_MAX_FILE_SIZE_MB = int(os.getenv("UPLOAD_MAX_FILE_SIZE_MB", "25"))
+UPLOAD_MAX_FILE_SIZE_BYTES = UPLOAD_MAX_FILE_SIZE_MB * 1024 * 1024
 
 WATCH_DIR = Path(os.getenv("WATCH_DIR", "/root/autodl-tmp/input_images")).resolve()
 SCENE_DATA_ROOT = Path(os.getenv("SCENE_DATA_ROOT", "/root/autodl-tmp/gs_train/scenes")).resolve()
@@ -53,6 +64,10 @@ DEFAULT_CONFIG: Dict[str, str] = {
     "SPANN3R_VOXEL_SIZE": "0.008",
     "SPANN3R_RESOLUTION": "224",
     "TRAIN_SPLIT_FRACTION": "0.95",
+    "NS_MAX_NUM_ITERATIONS": "1000",
+    "NS_STEPS_PER_SAVE": "1000",
+    "NS_QUIT_ON_TRAIN_COMPLETION": "true",
+    "NS_TRAIN_EXTRA_ARGS": "",
     "NS_OUTPUT_ROOT": str(ROOT_DIR / "outputs"),
     "NS_EXPORT_AFTER_TRAIN": "true",
     "GAUSSIAN_EXPORT_SUBDIR": "gaussian_export",
@@ -62,9 +77,17 @@ DEFAULT_CONFIG: Dict[str, str] = {
     "UPLOAD_PORT": "6006",
     "VIEWER_PORT": "6006",
     "WATCH_DIR": str(WATCH_DIR),
+    "UPLOAD_SAVE_DIR": str(WATCH_DIR),
     "SCENE_DATA_ROOT": str(SCENE_DATA_ROOT),
     "TEST_PHOTO_ROOT": str(TEST_PHOTO_ROOT),
+    "ARCHIVE_DIR": "/root/autodl-tmp/input_images_archive",
     "SCENE_NAME_PREFIX": "scene",
+    "CLEAR_INPUT_AFTER_SNAPSHOT": "true",
+    "MAX_SCENES_KEEP": "5",
+    "MAX_PHOTO_SETS_KEEP": "5",
+    "RESTART_UPLOAD_CLEANUP": "archive",
+    "RESTART_UPLOAD_ARCHIVE_KEEP": "5",
+    "PIPELINE_STATE_FILE": str(LOG_DIR / "pipeline_state.json"),
     "OMP_NUM_THREADS": "1",
     "MKL_NUM_THREADS": "1",
     "NUMEXPR_NUM_THREADS": "1",
@@ -80,6 +103,10 @@ CONFIG_HELP: Dict[str, str] = {
     "SPANN3R_VOXEL_SIZE": "点云下采样体素尺寸，越大越稀疏。",
     "SPANN3R_RESOLUTION": "Spann3R 输入分辨率，常用 224。",
     "TRAIN_SPLIT_FRACTION": "训练集比例（其余用于评估）。",
+    "NS_MAX_NUM_ITERATIONS": "Splatfacto 训练步数，正式展示默认 1000。",
+    "NS_STEPS_PER_SAVE": "Nerfstudio checkpoint 保存间隔，默认 1000。",
+    "NS_QUIT_ON_TRAIN_COMPLETION": "训练完成后是否自动退出 Viewer 并继续执行 Gaussian 导出。",
+    "NS_TRAIN_EXTRA_ARGS": "透传给 ns-train 的额外参数；步数、保存间隔和 Viewer 退出由上方字段统一管理。",
     "NS_OUTPUT_ROOT": "Nerfstudio 训练输出目录（用于自动导出 Gaussian 点云）。",
     "NS_EXPORT_AFTER_TRAIN": "训练结束后是否自动执行 ns-export gaussian-splat。",
     "GAUSSIAN_EXPORT_SUBDIR": "每个场景内 Gaussian 导出目录名。",
@@ -89,9 +116,17 @@ CONFIG_HELP: Dict[str, str] = {
     "UPLOAD_PORT": "上传服务端口（4090 后端模式通常为 6006）。",
     "VIEWER_PORT": "Nerfstudio Viewer 端口。",
     "WATCH_DIR": "上传照片落盘目录。",
+    "UPLOAD_SAVE_DIR": "上传代理保存目录，默认与 WATCH_DIR 一致。",
     "SCENE_DATA_ROOT": "多场景训练数据根目录（每次自动新建场景子目录）。",
     "TEST_PHOTO_ROOT": "测试照片留存目录（中期交付可复用）。",
+    "ARCHIVE_DIR": "旧上传图片归档目录。",
     "SCENE_NAME_PREFIX": "新场景命名前缀。",
+    "CLEAR_INPUT_AFTER_SNAPSHOT": "完成场景快照后是否清理上传目录。",
+    "MAX_SCENES_KEEP": "自动保留最近场景数据集数量。",
+    "MAX_PHOTO_SETS_KEEP": "自动保留最近测试照片集数量。",
+    "RESTART_UPLOAD_CLEANUP": "重启后端时处理旧上传图片：archive/delete/keep。",
+    "RESTART_UPLOAD_ARCHIVE_KEEP": "重启归档最多保留次数。",
+    "PIPELINE_STATE_FILE": "流水线任务状态 JSON 文件路径，供前端和管理台读取。",
     "OMP_NUM_THREADS": "CPU 并行线程上限。",
     "MKL_NUM_THREADS": "MKL 线程上限。",
     "NUMEXPR_NUM_THREADS": "NumExpr 线程上限。",
@@ -102,6 +137,7 @@ EDITABLE_KEYS = list(DEFAULT_CONFIG.keys())
 STEP_PATTERNS = [
     re.compile(r"Step[:=\s]+(\d+)", re.IGNORECASE),
     re.compile(r"Iter(?:ation)?[:=\s]+(\d+)", re.IGNORECASE),
+    re.compile(r"(?:^|\s)(\d+)\s+\(\d+(?:\.\d+)?%\)"),
 ]
 LOSS_PATTERN = re.compile(r"loss[:=\s]+([0-9]*\.?[0-9]+)", re.IGNORECASE)
 PERCENT_PATTERN = re.compile(r"\((\d+(?:\.\d+)?)%\)")
@@ -220,6 +256,77 @@ def get_config_path(config_key: str, fallback: Path) -> Path:
     return Path(values.get(config_key, str(fallback))).resolve()
 
 
+def read_pipeline_state() -> Dict[str, object]:
+    return STATE_STORE.read()
+
+
+def normalize_state_phase(state: Dict[str, object], running: bool) -> str:
+    phase = str(state.get("phase") or "idle")
+    status = str(state.get("status") or "")
+    if status == "running" and not running and phase not in {"completed", "failed", "stopped", "idle"}:
+        return "stopped"
+    return phase
+
+
+def active_job_from_state(state: Dict[str, object], running: bool) -> Optional[Dict[str, object]]:
+    if not state:
+        return None
+    job_id = str(state.get("job_id") or "")
+    scene_name = str(state.get("scene_name") or "")
+    if not job_id and not scene_name:
+        return None
+    return {
+        "id": job_id or scene_name,
+        "scene_name": scene_name,
+        "phase": normalize_state_phase(state, running),
+        "status": state.get("status") or ("running" if running else "idle"),
+        "started_at": state.get("started_at") or "",
+        "updated_at": state.get("updated_at") or "",
+    }
+
+
+def merge_state_progress(
+    state: Dict[str, object],
+    log_progress: Dict[str, Optional[str]],
+    running: bool,
+) -> Dict[str, object]:
+    state_copy = dict(state)
+    phase = normalize_state_phase(state_copy, running)
+    if phase != state_copy.get("phase"):
+        state_copy["phase"] = phase
+        state_copy["status"] = "stopped"
+        state_copy["message"] = "流水线进程已退出，状态标记为已停止"
+
+    metrics = state_copy.get("metrics") if isinstance(state_copy.get("metrics"), dict) else {}
+    progress: Dict[str, object] = dict(metrics)
+    for key, value in log_progress.items():
+        if value not in (None, ""):
+            progress[key] = value
+
+    scene_name = str(state_copy.get("scene_name") or progress.get("scene_name") or read_latest_scene())
+    state_for_sections = dict(state_copy)
+    state_for_sections["metrics"] = progress
+
+    progress.update(
+        {
+            "job_id": state_copy.get("job_id") or scene_name,
+            "scene_name": scene_name,
+            "phase": phase,
+            "stage": phase,
+            "status": state_copy.get("status") or ("running" if running else "idle"),
+            "message": state_copy.get("message") or "",
+            "error": state_copy.get("error") or "",
+            "started_at": state_copy.get("started_at") or "",
+            "updated_at": state_copy.get("updated_at") or "",
+            "completed_at": state_copy.get("completed_at") or "",
+            "paths": state_copy.get("paths") or {},
+            "artifacts": state_copy.get("artifacts") or {},
+            "sections": build_sections(state_for_sections),
+        }
+    )
+    return progress
+
+
 def under_allowed_roots(path: Path) -> bool:
     resolved = path.resolve()
     for root in POINTCLOUD_ROOTS:
@@ -334,6 +441,104 @@ def index_by_id() -> Dict[str, Path]:
     return mapping
 
 
+def summarize_pointclouds(items: List[Dict[str, str]]) -> Dict[str, object]:
+    total_size = 0
+    scenes: Dict[str, int] = {}
+    for item in items:
+        try:
+            total_size += int(item.get("size_bytes") or 0)
+        except ValueError:
+            pass
+        scene = item.get("scene") or "-"
+        scenes[scene] = scenes.get(scene, 0) + 1
+    return {
+        "count": len(items),
+        "total_size": human_size(total_size),
+        "latest": items[0] if items else None,
+        "scenes": scenes,
+    }
+
+
+def human_size(size_bytes: int) -> str:
+    value = float(max(size_bytes, 0))
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.2f} {unit}"
+        value /= 1024
+
+
+def is_processed_pointcloud(item: Dict[str, str]) -> bool:
+    name = (item.get("name") or "").lower()
+    return (
+        "clipped" in name
+        or "downsampled" in name
+        or name.endswith("_init.ply")
+    )
+
+
+def filter_pointclouds_by_processed(
+    items: List[Dict[str, str]],
+    processed: Optional[bool],
+) -> List[Dict[str, str]]:
+    if processed is None:
+        return items
+    return [item for item in items if is_processed_pointcloud(item) == processed]
+
+
+def make_zip_response(items: List[Dict[str, str]], archive_name: str) -> FileResponse:
+    if not items:
+        raise HTTPException(status_code=404, detail="未找到可打包点云")
+
+    tmp = tempfile.NamedTemporaryFile(prefix="pointclouds_", suffix=".zip", delete=False)
+    tmp_path = Path(tmp.name)
+    tmp.close()
+
+    used_names: Dict[str, int] = {}
+    with zipfile.ZipFile(tmp_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for item in items:
+            path = Path(item["path"])
+            if not path.exists() or not under_allowed_roots(path):
+                continue
+            arcname = f"{item.get('scene') or 'scene'}_{path.name}"
+            count = used_names.get(arcname, 0)
+            used_names[arcname] = count + 1
+            if count:
+                stem = Path(arcname).stem
+                suffix = Path(arcname).suffix
+                arcname = f"{stem}_{count}{suffix}"
+            archive.write(path, arcname=arcname)
+
+    return FileResponse(
+        tmp_path,
+        filename=archive_name,
+        media_type="application/zip",
+        background=BackgroundTask(lambda: tmp_path.unlink(missing_ok=True)),
+    )
+
+
+def find_scene_gaussian_files(scene_name: str) -> Dict[str, str]:
+    if not scene_name:
+        return {}
+    scene_items = [
+        item for item in discover_pointclouds()
+        if item.get("scene") == scene_name and item.get("variant") == "gaussian"
+    ]
+    raw = ""
+    clipped = ""
+    for item in scene_items:
+        name = (item.get("name") or "").lower()
+        if not clipped and "clipped" in name:
+            clipped = item.get("name") or ""
+        if not raw and ("_gaussian_raw" in name or name == "splat.ply"):
+            raw = item.get("name") or ""
+    return {
+        "raw": raw,
+        "clipped": clipped,
+    }
+
+
 def discover_uploaded_images(limit: int = 200) -> List[Dict[str, str]]:
     watch_dir = get_config_path("WATCH_DIR", WATCH_DIR)
     payload: List[Dict[str, str]] = []
@@ -345,6 +550,29 @@ def discover_uploaded_images(limit: int = 200) -> List[Dict[str, str]]:
                 "size_bytes": str(stat.st_size),
                 "mtime": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
                 "path": str(image_path),
+            }
+        )
+    return payload
+
+
+def discover_upload_archives(limit: int = 20) -> List[Dict[str, str]]:
+    archive_root = get_config_path("ARCHIVE_DIR", Path("/root/autodl-tmp/input_images_archive"))
+    if not archive_root.exists():
+        return []
+    candidates = [item for item in archive_root.iterdir() if item.is_dir()]
+    candidates.sort(key=lambda item: item.stat().st_mtime_ns, reverse=True)
+
+    payload: List[Dict[str, str]] = []
+    for archive_dir in candidates[:limit]:
+        image_count = len([item for item in archive_dir.iterdir() if item.is_file() and item.suffix in IMAGE_EXTENSIONS])
+        total_size = sum(item.stat().st_size for item in archive_dir.iterdir() if item.is_file())
+        payload.append(
+            {
+                "name": archive_dir.name,
+                "path": str(archive_dir),
+                "image_count": str(image_count),
+                "size_bytes": str(total_size),
+                "mtime": datetime.fromtimestamp(archive_dir.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
             }
         )
     return payload
@@ -410,7 +638,133 @@ def clear_uploaded_images() -> int:
     for image_path in list_images(watch_dir):
         image_path.unlink(missing_ok=True)
         deleted += 1
+    for part_path in watch_dir.glob("*.part") if watch_dir.exists() else []:
+        part_path.unlink(missing_ok=True)
+        deleted += 1
+    manifest = watch_dir / "_upload_manifest.jsonl"
+    if manifest.exists():
+        manifest.unlink(missing_ok=True)
+        deleted += 1
     return deleted
+
+
+def validate_upload_token(form_token: str, header_token: str) -> None:
+    if not UPLOAD_AUTH_TOKEN:
+        return
+    token = form_token or header_token
+    if not secrets.compare_digest(token.strip(), UPLOAD_AUTH_TOKEN):
+        raise HTTPException(status_code=401, detail="上传鉴权失败，无效 token")
+
+
+def validate_upload_extension(filename: str) -> str:
+    suffix = Path(filename or "").suffix.lower()
+    if suffix not in {".jpg", ".jpeg", ".png"}:
+        raise HTTPException(status_code=400, detail="仅支持 jpg/jpeg/png 格式")
+    return suffix
+
+
+def current_phase_for_upload_gate() -> str:
+    running = bool(get_running_pipeline_pid())
+    state = read_pipeline_state()
+    if state:
+        return normalize_state_phase(state, running)
+    logs = extract_current_run_logs(tail_lines(PIPELINE_LOG_FILE, 1200))
+    progress = parse_progress(logs)
+    phase_info = build_phase_status(logs, running, progress)
+    return str(phase_info.get("phase") or "unknown")
+
+
+def can_upload_by_phase(phase: str) -> bool:
+    return phase in {"idle", "input", "upload", "stopped", "unknown"}
+
+
+def upload_stats_payload() -> Dict[str, object]:
+    watch_dir = get_config_path("WATCH_DIR", WATCH_DIR)
+    images = list_images(watch_dir)
+    total_bytes = sum(item.stat().st_size for item in images)
+    phase = current_phase_for_upload_gate()
+    state = read_pipeline_state()
+    return {
+        "status": "ok",
+        "phase": phase,
+        "allow_upload": can_upload_by_phase(phase),
+        "uploaded_files": len(images),
+        "uploaded_bytes": total_bytes,
+        "save_dir": str(watch_dir),
+        "max_file_size_mb": UPLOAD_MAX_FILE_SIZE_MB,
+        "active_job": active_job_from_state(state, bool(get_running_pipeline_pid())),
+    }
+
+
+async def save_uploaded_frame(
+    frame_file: UploadFile,
+    form_token: str,
+    header_token: str,
+    frame_index: str = "",
+    session_id: str = "",
+) -> Dict[str, object]:
+    phase = current_phase_for_upload_gate()
+    if not can_upload_by_phase(phase):
+        raise HTTPException(status_code=409, detail=f"当前阶段不可上传：{phase}")
+
+    validate_upload_token(form_token, header_token)
+    suffix = validate_upload_extension(frame_file.filename or "")
+
+    watch_dir = get_config_path("WATCH_DIR", WATCH_DIR)
+    watch_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_session = re.sub(r"[^A-Za-z0-9_.-]+", "_", session_id or "wx")[:80]
+    safe_index = re.sub(r"[^0-9]+", "", frame_index or "")[:8]
+    index_part = f"_{safe_index}" if safe_index else ""
+    filename = (
+        f"{datetime.utcnow().strftime('%Y%m%d%H%M%S_%f')}_"
+        f"{safe_session}{index_part}_{uuid.uuid4().hex[:8]}{suffix}"
+    )
+    save_path = watch_dir / filename
+
+    total_bytes = 0
+    try:
+        with save_path.open("wb") as handle:
+            while True:
+                chunk = await frame_file.read(UPLOAD_CHUNK_SIZE)
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > UPLOAD_MAX_FILE_SIZE_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"文件超过大小限制 {UPLOAD_MAX_FILE_SIZE_MB}MB",
+                    )
+                handle.write(chunk)
+    except HTTPException:
+        save_path.unlink(missing_ok=True)
+        raise
+    except Exception as error:
+        save_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"文件保存失败: {error}")
+    finally:
+        await frame_file.close()
+
+    manifest = watch_dir / "_upload_manifest.jsonl"
+    manifest_row = {
+        "filename": filename,
+        "bytes": total_bytes,
+        "phase": phase,
+        "frame_index": frame_index,
+        "session_id": session_id,
+        "created_at": datetime.utcnow().isoformat() + "Z",
+    }
+    with manifest.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(manifest_row, ensure_ascii=False) + "\n")
+
+    return {
+        "code": 200,
+        "ok": True,
+        "msg": "上传成功",
+        "filename": filename,
+        "bytes": total_bytes,
+        "phase": phase,
+    }
 
 
 def clear_all_pointclouds() -> int:
@@ -580,6 +934,12 @@ def start_pipeline() -> int:
     finally:
         log_stream.close()
     PIPELINE_PID_FILE.write_text(str(process.pid), encoding="utf-8")
+    STATE_STORE.start_job(
+        f"manual_{time.strftime('%Y%m%d_%H%M%S')}",
+        phase="input",
+        message="流程已启动，等待上传稳定",
+        paths={"watch_dir": str(get_config_path("WATCH_DIR", WATCH_DIR))},
+    )
     return process.pid
 
 
@@ -600,17 +960,22 @@ def stop_pipeline() -> bool:
     pid = get_running_pipeline_pid()
     if not pid:
         PIPELINE_PID_FILE.unlink(missing_ok=True)
+        state = read_pipeline_state()
+        if state.get("status") == "running":
+            STATE_STORE.stop("流程未运行，状态已标记为停止")
         return False
 
     terminate_pipeline_tree(pid, signal.SIGTERM)
     for _ in range(30):
         if not process_alive(pid):
             PIPELINE_PID_FILE.unlink(missing_ok=True)
+            STATE_STORE.stop("用户停止训练")
             return True
         time.sleep(0.2)
 
     terminate_pipeline_tree(pid, signal.SIGKILL)
     PIPELINE_PID_FILE.unlink(missing_ok=True)
+    STATE_STORE.stop("用户强制停止训练")
     return True
 
 
@@ -984,7 +1349,13 @@ async def index() -> str:
 @app.get("/api/status")
 async def api_status():
     pid = get_running_pipeline_pid()
-    return {"running": bool(pid), "pid": pid}
+    state = read_pipeline_state()
+    return {
+        "running": bool(pid),
+        "pid": pid,
+        "queue_length": 0,
+        "active_job": active_job_from_state(state, bool(pid)),
+    }
 
 
 @app.get("/api/config")
@@ -1013,15 +1384,47 @@ async def api_logs(lines: int = 200):
     return {"lines": tail_lines(PIPELINE_LOG_FILE, lines)}
 
 
+@app.get("/upload-proxy/healthz")
+async def upload_proxy_healthz():
+    return upload_stats_payload()
+
+
+@app.get("/upload-proxy/stats")
+async def upload_proxy_stats():
+    return upload_stats_payload()
+
+
+@app.post("/upload-proxy/upload")
+async def upload_proxy_upload(
+    frame_file: UploadFile = File(...),
+    token: str = Form(default=""),
+    x_auth_token: str = Header(default="", alias="X-Auth-Token"),
+    frame_index: str = Form(default=""),
+    session_id: str = Form(default=""),
+):
+    return await save_uploaded_frame(
+        frame_file=frame_file,
+        form_token=token,
+        header_token=x_auth_token,
+        frame_index=frame_index,
+        session_id=session_id,
+    )
+
+
 @app.get("/api/progress")
 async def api_progress():
     running = bool(get_running_pipeline_pid())
     logs = extract_current_run_logs(tail_lines(PIPELINE_LOG_FILE, 1200))
-    progress = parse_progress(logs)
-    phase_info = build_phase_status(logs, running, progress)
-    progress["phase"] = phase_info["phase"]
-    progress["stage"] = phase_info["phase"]
-    progress["sections"] = phase_info["sections"]
+    log_progress = parse_progress(logs)
+    state = read_pipeline_state()
+    if state:
+        progress = merge_state_progress(state, log_progress, running)
+    else:
+        progress = log_progress
+        phase_info = build_phase_status(logs, running, progress)
+        progress["phase"] = phase_info["phase"]
+        progress["stage"] = phase_info["phase"]
+        progress["sections"] = phase_info["sections"]
 
     raw_points = progress.get("raw_points")
     downsampled_points = progress.get("downsampled_points")
@@ -1036,6 +1439,13 @@ async def api_progress():
 
     gaussian_raw_file = progress.get("gaussian_raw_file")
     gaussian_clipped_file = progress.get("gaussian_clipped_file")
+    if not (gaussian_raw_file and gaussian_clipped_file):
+        scene_name = progress.get("scene_name") or read_latest_scene()
+        gaussian_files = find_scene_gaussian_files(scene_name)
+        gaussian_raw_file = gaussian_raw_file or gaussian_files.get("raw")
+        gaussian_clipped_file = gaussian_clipped_file or gaussian_files.get("clipped")
+        progress["gaussian_raw_file"] = gaussian_raw_file
+        progress["gaussian_clipped_file"] = gaussian_clipped_file
     if gaussian_raw_file and gaussian_clipped_file:
         progress["gaussian_summary"] = (
             f"Gaussian导出: raw={gaussian_raw_file} | clipped={gaussian_clipped_file}"
@@ -1050,13 +1460,19 @@ async def api_progress():
 @app.get("/api/uploads/summary")
 async def api_uploads_summary():
     watch_dir = get_config_path("WATCH_DIR", WATCH_DIR)
+    archive_dir = get_config_path("ARCHIVE_DIR", Path("/root/autodl-tmp/input_images_archive"))
+    values = read_env_file()
     all_images = list_images(watch_dir)
     items = discover_uploaded_images(limit=200)
     return {
         "watch_dir": str(watch_dir),
+        "archive_dir": str(archive_dir),
+        "cleanup_mode": values.get("RESTART_UPLOAD_CLEANUP", "archive"),
+        "archive_keep": values.get("RESTART_UPLOAD_ARCHIVE_KEEP", "5"),
         "count": len(all_images),
         "latest_mtime": items[0]["mtime"] if items else None,
         "items": items,
+        "archives": discover_upload_archives(limit=20),
     }
 
 
@@ -1085,6 +1501,15 @@ async def api_scenes_summary():
 async def api_pointclouds_clear(_: None = Depends(require_dashboard_token)):
     deleted = clear_all_pointclouds()
     return {"ok": True, "deleted": deleted}
+
+
+@app.get("/api/pointclouds/summary")
+async def api_pointclouds_summary():
+    items = discover_pointclouds()
+    return {
+        "summary": summarize_pointclouds(items),
+        "items": items[:300],
+    }
 
 
 @app.post("/api/pipeline/start")
@@ -1129,7 +1554,21 @@ async def api_export_latest_gaussian(_: None = Depends(require_dashboard_token))
     if not scene_dir.exists():
         raise HTTPException(status_code=404, detail=f"场景目录不存在: {scene_dir}")
 
-    export_gaussian_artifacts(config, latest_scene, scene_dir, time.time() - 86400 * 30)
+    STATE_STORE.update(
+        phase="export",
+        status="running",
+        scene_name=latest_scene,
+        message="手动导出 Gaussian 点云",
+    )
+    gaussian_artifacts = export_gaussian_artifacts(config, latest_scene, scene_dir, time.time() - 86400 * 30)
+    if gaussian_artifacts:
+        STATE_STORE.update(
+            phase="completed",
+            status="completed",
+            scene_name=latest_scene,
+            message="手动导出完成",
+            artifacts=gaussian_artifacts,
+        )
 
     pointclouds = discover_pointclouds()
     target = pick_preferred_pointcloud(
@@ -1154,6 +1593,7 @@ async def healthz():
         "scene_data_root": str(scene_data_root),
         "test_photo_root": str(test_photo_root),
         "pointcloud_roots": [str(root) for root in POINTCLOUD_ROOTS],
+        "state_file": str(STATE_STORE.path),
         "auth_enabled": bool(DASHBOARD_AUTH_TOKEN),
     }
 
@@ -1205,8 +1645,8 @@ async def files():
 
 
 @app.get("/download/latest")
-async def download_latest(prefer: str = "gaussian"):
-    items = discover_pointclouds()
+async def download_latest(prefer: str = "gaussian", processed: Optional[bool] = None):
+    items = filter_pointclouds_by_processed(discover_pointclouds(), processed)
     if not items:
         raise HTTPException(status_code=404, detail="未找到可下载点云")
     prefer = (prefer or "gaussian").strip().lower()
@@ -1221,6 +1661,64 @@ async def download_latest(prefer: str = "gaussian"):
         raise HTTPException(status_code=404, detail=f"未找到类型为 {prefer} 的点云")
     path = Path(chosen["path"])
     return FileResponse(path, filename=path.name, media_type="application/octet-stream")
+
+
+@app.get("/download/processed/latest")
+async def download_processed_latest(prefer: str = "gaussian"):
+    items = filter_pointclouds_by_processed(discover_pointclouds(), True)
+    if not items:
+        raise HTTPException(status_code=404, detail="未找到优化后的可下载点云")
+    chosen = pick_preferred_pointcloud(items, prefer=prefer, strict=False)
+    if not chosen:
+        raise HTTPException(status_code=404, detail=f"未找到类型为 {prefer} 的优化点云")
+    path = Path(chosen["path"])
+    return FileResponse(path, filename=path.name, media_type="application/octet-stream")
+
+
+@app.get("/download/scene/{scene_name}")
+async def download_scene_pointcloud(
+    scene_name: str,
+    prefer: str = "gaussian",
+    processed: Optional[bool] = None,
+):
+    scene_name = scene_name.strip()
+    if not scene_name:
+        raise HTTPException(status_code=400, detail="scene_name 不能为空")
+    items = [
+        item for item in filter_pointclouds_by_processed(discover_pointclouds(), processed)
+        if item.get("scene") == scene_name
+    ]
+    if not items:
+        raise HTTPException(status_code=404, detail=f"场景 {scene_name} 未找到可下载点云")
+    prefer = (prefer or "gaussian").strip().lower()
+    chosen = pick_preferred_pointcloud(items, prefer=prefer, strict=(prefer != "any"))
+    if not chosen:
+        raise HTTPException(status_code=404, detail=f"场景 {scene_name} 未找到类型为 {prefer} 的点云")
+    path = Path(chosen["path"])
+    return FileResponse(path, filename=path.name, media_type="application/octet-stream")
+
+
+@app.get("/download/zip")
+async def download_zip(ids: str = "", variant: str = "gaussian", processed: Optional[bool] = None):
+    all_items = discover_pointclouds()
+    selected: List[Dict[str, str]] = []
+
+    if ids.strip():
+        wanted = {item.strip() for item in ids.split(",") if item.strip()}
+        selected = [item for item in all_items if item.get("id") in wanted]
+    else:
+        variant_key = (variant or "gaussian").strip().lower()
+        latest_scene = read_latest_scene()
+        selected = [
+            item for item in all_items
+            if (variant_key == "any" or item.get("variant") == variant_key)
+            and (not latest_scene or item.get("scene") == latest_scene)
+        ]
+        selected = filter_pointclouds_by_processed(selected, processed)
+
+    archive_scene = read_latest_scene() or "pointclouds"
+    archive_variant = (variant or "any").strip().lower() or "any"
+    return make_zip_response(selected, f"{archive_scene}_{archive_variant}.zip")
 
 
 @app.get("/download/{file_id}")

@@ -7,10 +7,12 @@ import signal
 import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import open3d as o3d
+
+from pipeline.task_state import PipelineStateStore
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".JPG", ".JPEG", ".PNG"}
 
@@ -51,6 +53,9 @@ class PipelineConfig:
     clear_input_after_snapshot: bool
     max_scene_keep: int
     max_photo_sets_keep: int
+    ns_max_num_iterations: int
+    ns_steps_per_save: int
+    ns_quit_on_train_completion: bool
     ns_train_extra_args: str
     ns_output_root: Path
     ns_export_after_train: bool
@@ -92,6 +97,9 @@ class PipelineConfig:
             clear_input_after_snapshot=_get_env_bool("CLEAR_INPUT_AFTER_SNAPSHOT", True),
             max_scene_keep=int(os.getenv("MAX_SCENES_KEEP", "5")),
             max_photo_sets_keep=int(os.getenv("MAX_PHOTO_SETS_KEEP", "5")),
+            ns_max_num_iterations=int(os.getenv("NS_MAX_NUM_ITERATIONS", "1000")),
+            ns_steps_per_save=int(os.getenv("NS_STEPS_PER_SAVE", "1000")),
+            ns_quit_on_train_completion=_get_env_bool("NS_QUIT_ON_TRAIN_COMPLETION", True),
             ns_train_extra_args=os.getenv("NS_TRAIN_EXTRA_ARGS", "").strip(),
             ns_output_root=Path(os.getenv("NS_OUTPUT_ROOT", str(root / "outputs"))),
             ns_export_after_train=_get_env_bool("NS_EXPORT_AFTER_TRAIN", True),
@@ -141,7 +149,10 @@ def snapshot_uploaded_images(config: PipelineConfig, images: List[Path], scene_n
     return scene_photo_dir
 
 
-def wait_until_upload_stable(config: PipelineConfig) -> List[Path]:
+def wait_until_upload_stable(
+    config: PipelineConfig,
+    state_store: Optional[PipelineStateStore] = None,
+) -> List[Path]:
     config.watch_dir.mkdir(parents=True, exist_ok=True)
     print(f"🚀 流水线已启动，监听目录: {config.watch_dir}")
     print(
@@ -165,14 +176,52 @@ def wait_until_upload_stable(config: PipelineConfig) -> List[Path]:
                 stable_rounds = 0
                 print(f"📈 已检测到图片: {image_count}，继续等待上传完成...", end="\r")
             last_fingerprint = fingerprint
+            if state_store:
+                state_store.update(
+                    phase="input",
+                    status="running",
+                    message="正在检测上传是否稳定",
+                    metrics={
+                        "uploaded_images": image_count,
+                        "stable_rounds": stable_rounds,
+                        "stable_polls": config.stable_polls,
+                        "min_img_count": config.min_img_count,
+                    },
+                    paths={"watch_dir": str(config.watch_dir)},
+                )
             if stable_rounds >= config.stable_polls:
                 print(f"\n✅ 上传完成确认，共 {image_count} 张图片。")
+                if state_store:
+                    state_store.update(
+                        phase="input",
+                        status="running",
+                        message="上传已稳定，准备创建场景",
+                        metrics={
+                            "uploaded_images": image_count,
+                            "stable_rounds": stable_rounds,
+                            "stable_polls": config.stable_polls,
+                            "min_img_count": config.min_img_count,
+                        },
+                    )
                 return images
         else:
             print(
                 f"🕒 当前图片 {image_count} 张，未达到阈值 {config.min_img_count} 张，持续监听...",
                 end="\r",
             )
+            if state_store:
+                state_store.update(
+                    phase="input",
+                    status="running",
+                    message="等待上传达到最小图片数",
+                    metrics={
+                        "uploaded_images": image_count,
+                        "stable_rounds": stable_rounds,
+                        "stable_polls": config.stable_polls,
+                        "min_img_count": config.min_img_count,
+                    },
+                    paths={"watch_dir": str(config.watch_dir)},
+                )
         time.sleep(config.poll_interval_sec)
 
 
@@ -324,16 +373,16 @@ def mark_latest_scene(scene_data_root: Path, scene_name: str) -> None:
     marker.write_text(scene_name + "\n", encoding="utf-8")
 
 
-def archive_input_images(config: PipelineConfig) -> None:
+def archive_input_images(config: PipelineConfig) -> Dict[str, object]:
     images = list_images(config.watch_dir)
     part_files = sorted(config.watch_dir.glob("*.part")) if config.watch_dir.exists() else []
     manifest_file = config.watch_dir / "_upload_manifest.jsonl"
     if not images and not part_files and not manifest_file.exists():
-        return
+        return {"mode": "empty", "deleted": 0, "archived": 0, "archive_dir": ""}
 
     if not config.archive_input:
         if not config.clear_input_after_snapshot:
-            return
+            return {"mode": "keep", "deleted": 0, "archived": 0, "archive_dir": ""}
         deleted = 0
         for image_path in images:
             image_path.unlink(missing_ok=True)
@@ -342,7 +391,7 @@ def archive_input_images(config: PipelineConfig) -> None:
             part_path.unlink(missing_ok=True)
         manifest_file.unlink(missing_ok=True)
         print(f"🧹 已清理上传目录: {config.watch_dir} (删除 {deleted} 张图片)")
-        return
+        return {"mode": "delete", "deleted": deleted, "archived": 0, "archive_dir": ""}
 
     archive_subdir = config.archive_dir / time.strftime("%Y%m%d_%H%M%S")
     archive_subdir.mkdir(parents=True, exist_ok=True)
@@ -351,6 +400,7 @@ def archive_input_images(config: PipelineConfig) -> None:
     if manifest_file.exists():
         shutil.move(str(manifest_file), archive_subdir / manifest_file.name)
     print(f"🗄️ 已归档原始图片到: {archive_subdir}")
+    return {"mode": "archive", "deleted": 0, "archived": len(images), "archive_dir": str(archive_subdir)}
 
 
 def prune_child_dirs(root: Path, keep: int, protected_name: str = "") -> int:
@@ -377,20 +427,28 @@ def prune_old_assets(config: PipelineConfig, current_scene: str) -> None:
 
 def build_ns_train_command(config: PipelineConfig, data_dir: Optional[Path] = None) -> List[str]:
     data_dir = data_dir or config.target_data_dir
+    extra_args = shlex.split(config.ns_train_extra_args) if config.ns_train_extra_args else []
+    extra_args = strip_ns_train_managed_args(extra_args)
     command = [
         "ns-train",
         "splatfacto",
         "--data",
         str(data_dir),
+        "--max-num-iterations",
+        str(config.ns_max_num_iterations),
+        "--steps-per-save",
+        str(config.ns_steps_per_save),
         "--viewer.websocket-port",
         str(config.viewer_port),
+        "--viewer.quit-on-train-completion",
+        "True" if config.ns_quit_on_train_completion else "False",
         "--pipeline.model.random-init",
         "False",
         "--vis",
         "viewer",
     ]
-    if config.ns_train_extra_args:
-        command.extend(shlex.split(config.ns_train_extra_args))
+    if extra_args:
+        command.extend(extra_args)
     command.extend([
         "nerfstudio-data",
         "--eval-mode",
@@ -399,6 +457,27 @@ def build_ns_train_command(config: PipelineConfig, data_dir: Optional[Path] = No
         str(config.train_split_fraction),
     ])
     return command
+
+
+def strip_ns_train_managed_args(args: Sequence[str]) -> List[str]:
+    managed = {
+        "--max-num-iterations",
+        "--steps-per-save",
+        "--viewer.quit-on-train-completion",
+    }
+    stripped: List[str] = []
+    skip_next = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in managed:
+            skip_next = True
+            continue
+        if any(arg.startswith(flag + "=") for flag in managed):
+            continue
+        stripped.append(arg)
+    return stripped
 
 
 def resolve_latest_ns_config(outputs_root: Path, scene_name: str, since_timestamp: float) -> Optional[Path]:
@@ -498,15 +577,15 @@ def export_gaussian_artifacts(
     scene_name: str,
     scene_target_dir: Path,
     train_start_timestamp: float,
-) -> None:
+) -> Dict[str, str]:
     if not config.ns_export_after_train:
         print("⏭️ 已关闭 Gaussian 导出步骤（NS_EXPORT_AFTER_TRAIN=false）。")
-        return
+        return {}
 
     config_path = resolve_latest_ns_config(config.ns_output_root, scene_name, train_start_timestamp)
     if not config_path:
         print(f"⚠️ 未找到可用训练配置，跳过 Gaussian 导出: root={config.ns_output_root}")
-        return
+        return {}
 
     export_dir = scene_target_dir / config.gaussian_export_subdir
     if export_dir.exists():
@@ -523,7 +602,7 @@ def export_gaussian_artifacts(
     )
     if not exported_plys:
         print(f"⚠️ Gaussian 导出完成但未发现 .ply: {export_dir}")
-        return
+        return {}
 
     gaussian_raw_target = scene_target_dir / f"{scene_name}_gaussian_raw.ply"
     shutil.copy2(exported_plys[0], gaussian_raw_target)
@@ -552,6 +631,11 @@ def export_gaussian_artifacts(
         "✅ Gaussian 点云导出完成: "
         f"raw={gaussian_raw_target.name}, clipped={gaussian_clipped_target.name}"
     )
+    return {
+        "gaussian_raw": str(gaussian_raw_target),
+        "gaussian_clipped": str(gaussian_clipped_target),
+        "gaussian_export_dir": str(export_dir),
+    }
 
 
 def terminate_conflicting_ns_train(viewer_port: int, keep_data_dir: Optional[Path] = None) -> List[int]:
@@ -589,18 +673,68 @@ def terminate_conflicting_ns_train(viewer_port: int, keep_data_dir: Optional[Pat
     return killed
 
 
-def run_pipeline_once(config: PipelineConfig) -> None:
+def run_pipeline_once(
+    config: PipelineConfig,
+    state_store: Optional[PipelineStateStore] = None,
+) -> None:
+    state_store = state_store or PipelineStateStore()
+    job_seed = f"{sanitize_name(config.scene_name_prefix)}_{time.strftime('%Y%m%d_%H%M%S')}"
+    state_store.start_job(
+        job_seed,
+        phase="input",
+        message="等待上传稳定",
+        paths={
+            "watch_dir": str(config.watch_dir),
+            "scene_data_root": str(config.scene_data_root),
+            "test_photo_root": str(config.test_photo_root),
+            "archive_dir": str(config.archive_dir),
+        },
+        metrics={
+            "min_img_count": config.min_img_count,
+            "stable_polls": config.stable_polls,
+            "max_iterations": config.ns_max_num_iterations,
+        },
+    )
+
     print("🧭 阶段切换: 输入监测")
-    images = wait_until_upload_stable(config)
+    images = wait_until_upload_stable(config, state_store=state_store)
     scene_name = build_scene_name(config, images)
+    state_store.update(
+        job_id=scene_name,
+        scene_name=scene_name,
+        phase="input",
+        status="running",
+        message="上传稳定，已创建场景",
+        metrics={"uploaded_images": len(images)},
+    )
     scene_photo_dir = snapshot_uploaded_images(config, images, scene_name)
+    state_store.update(paths={"scene_photo_dir": str(scene_photo_dir)})
 
     print("🧭 阶段切换: Spann3R 重建")
+    state_store.update(
+        phase="spann3r",
+        status="running",
+        message="Spann3R 正在生成几何与相机位姿",
+        paths={"scene_photo_dir": str(scene_photo_dir)},
+    )
     scene_output_dir = run_spann3r(config, scene_photo_dir, scene_name)
     scene_target_dir = config.scene_data_root / scene_name
+    state_store.update(
+        paths={
+            "scene_output_dir": str(scene_output_dir),
+            "scene_data_dir": str(scene_target_dir),
+        },
+    )
 
     prepare_target_dataset(config, source_images_dir=scene_photo_dir, target_data_dir=scene_target_dir)
-    _, _, pointcloud_name = copy_point_clouds(scene_output_dir, scene_target_dir, scene_name)
+    raw_name, downsampled_name, pointcloud_name = copy_point_clouds(scene_output_dir, scene_target_dir, scene_name)
+    state_store.update(
+        artifacts={
+            "spann3r_raw": str(scene_target_dir / raw_name),
+            "spann3r_downsampled": str(scene_target_dir / downsampled_name),
+            "train_pointcloud": str(scene_target_dir / pointcloud_name),
+        },
+    )
     run_conversion(
         config,
         scene_output_dir,
@@ -618,14 +752,41 @@ def run_pipeline_once(config: PipelineConfig) -> None:
         print(f"🧹 已停止占用 Viewer 端口 {config.viewer_port} 的旧训练进程: {stale_pids}")
     print("🧭 阶段切换: Gaussian 训练/导出")
     print("🔥 启动 Nerfstudio 训练...")
+    state_store.update(
+        phase="gaussian",
+        status="running",
+        message="3DGaussian 正在训练",
+        metrics={
+            "step": 0,
+            "loss": "",
+            "percent": 0,
+            "max_iterations": config.ns_max_num_iterations,
+        },
+        paths={"scene_data_dir": str(scene_target_dir)},
+    )
     train_start_timestamp = time.time()
     run_command(build_ns_train_command(config, scene_target_dir))
-    export_gaussian_artifacts(config, scene_name, scene_target_dir, train_start_timestamp)
-    archive_input_images(config)
+    state_store.update(
+        phase="export",
+        status="running",
+        message="训练完成，正在导出 Gaussian 点云",
+        metrics={"step": config.ns_max_num_iterations, "percent": 100},
+    )
+    gaussian_artifacts = export_gaussian_artifacts(config, scene_name, scene_target_dir, train_start_timestamp)
+    archive_summary = archive_input_images(config)
+    state_store.update(
+        phase="completed",
+        status="completed",
+        message="训练与导出完成",
+        metrics={"step": config.ns_max_num_iterations, "percent": 100},
+        artifacts=gaussian_artifacts,
+        paths={"upload_cleanup": archive_summary},
+    )
 
 
 def main() -> None:
     config = PipelineConfig.from_env()
+    state_store = PipelineStateStore()
     printable = asdict(config)
     printable["watch_dir"] = str(config.watch_dir)
     printable["spann3r_root"] = str(config.spann3r_root)
@@ -641,11 +802,12 @@ def main() -> None:
 
     while True:
         try:
-            run_pipeline_once(config)
+            run_pipeline_once(config, state_store=state_store)
             if config.run_once:
                 break
         except Exception as error:
             print(f"\n❌ 流水线异常: {error}")
+            state_store.fail(error)
             if config.run_once:
                 raise
             print(f"⏳ {config.retry_interval_sec} 秒后重试...")

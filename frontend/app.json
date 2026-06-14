@@ -13,11 +13,11 @@
   },
   "serverDomain": {
     "request": [
-      "https://u342234-a85f-8b002f1b.bjb1.seetacloud.com:8443",
-      "https://uu342234-a85f-8b002f1b.bjb1.seetacloud.com:8443"
+      "https://u342234-lgwc-436004b2.bjb2.seetacloud.com:8443",
+      "https://uu342234-lgwc-436004b2.bjb2.seetacloud.com:8443"
     ],
     "uploadFile": [
-      "https://uu342234-a85f-8b002f1b.bjb1.seetacloud.com:8443"]
+      "https://uu342234-lgwc-436004b2.bjb2.seetacloud.com:8443"]
   },
   "sitemapLocation": "sitemap.json",
   "lazyCodeLoading": "requiredComponents"

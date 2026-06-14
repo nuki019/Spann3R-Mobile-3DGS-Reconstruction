@@ -1,136 +1,115 @@
 <view class="preview-wrap">
   <view class="panel backend-panel">
-    <view class="panel-title">后端状态面板（6006 / 6008 映射）</view>
-    <view class="panel-desc">
-      6006 映射到 u 域名:8443，6008 映射到 uu 域名:8443；6006 在上传与 Viewer 阶段分阶段复用。
+    <view class="panel-head">
+      <view>
+        <view class="panel-title">后端状态</view>
+        <view class="panel-subtitle">当前 {{phaseKey}} · 场景 {{sceneNameText}}</view>
+      </view>
+      <view class="phase-chip {{phaseCanDownload ? 'done' : (phaseCanViewer ? 'running' : 'pending')}}">{{pipelineRunningText}}</view>
     </view>
 
-    <button class="refresh-btn" bindtap="refreshNow" loading="{{isRefreshing}}">
-      {{isRefreshing ? "刷新中..." : "刷新后端状态"}}
-    </button>
-
-    <view class="phase-banner">
-      <text class="phase-title">当前 phase：{{phaseKey}}</text>
-      <text class="phase-desc">{{phaseActionHint}}</text>
-      <text class="phase-flags">
-        上传: {{phaseCanUpload ? "可用" : "禁用"}} | Viewer: {{phaseCanViewer ? "可用" : "禁用"}} | 下载: {{phaseCanDownload ? "可用" : "禁用"}}
-      </text>
-    </view>
-
-    <view class="status-grid">
-      <view class="status-item">
-        <text class="status-label">上传门控健康（6008 /healthz）</text>
-        <text class="status-value">{{uploadHealthText}}</text>
-      </view>
-      <view class="status-item">
-        <text class="status-label">6008 /healthz</text>
-        <text class="status-value">{{dashboardHealthText}}</text>
-      </view>
-      <view class="status-item">
-        <text class="status-label">上传累计 /stats</text>
-        <text class="status-value">{{uploadStatsText}}</text>
-      </view>
-      <view class="status-item">
-        <text class="status-label">流水线状态 /api/status</text>
-        <text class="status-value">{{pipelineRunningText}} | pid: {{pipelinePidText}} | {{pipelineQueueText}}</text>
-      </view>
-      <view class="status-item">
-        <text class="status-label">当前任务 /api/status</text>
-        <text class="status-value">{{pipelineJobText}}</text>
-      </view>
-      <view class="status-item">
-        <text class="status-label">流水线阶段 /api/progress</text>
-        <text class="status-value">{{pipelineStageText}}</text>
-      </view>
-      <view class="status-item">
-        <text class="status-label">步骤 /api/progress</text>
-        <text class="status-value">{{pipelineStepText}}</text>
-      </view>
-      <view class="status-item">
-        <text class="status-label">进度 /api/progress</text>
-        <text class="status-value">{{pipelinePercentText}}</text>
-      </view>
-      <view class="status-item">
-        <text class="status-label">Loss /api/progress</text>
-        <text class="status-value">{{pipelineLossText}}</text>
-      </view>
-      <view class="status-item">
-        <text class="status-label">上传图像数 /api/progress</text>
-        <text class="status-value">{{uploadedImagesText}}</text>
-      </view>
-      <view class="status-item">
-        <text class="status-label">场景名 /api/progress</text>
-        <text class="status-value">{{sceneNameText}}</text>
-      </view>
-      <view class="status-item">
-        <text class="status-label">上传目录摘要 /api/uploads/summary</text>
-        <text class="status-value">{{uploadsSummaryText}}</text>
-      </view>
-      <view class="status-item">
-        <text class="status-label">场景摘要 /api/scenes/summary</text>
-        <text class="status-value">{{scenesSummaryText}}</text>
-      </view>
-      <view class="status-item">
-        <text class="status-label">日志摘要 /api/logs</text>
-        <text class="status-value">{{logsSummaryText}}</text>
-      </view>
-    </view>
-
-    <view class="action-wrap">
-      <view class="action-title">管理动作（可选鉴权）</view>
-      <input
-        class="token-input"
-        type="text"
-        placeholder="DASHBOARD_AUTH_TOKEN（未启用可留空）"
-        value="{{dashboardToken}}"
-        bindinput="onDashboardTokenInput"
-      />
-      <view class="action-row">
-        <button class="action-btn action-start" bindtap="startPipeline" disabled="{{isActionRunning}}">
-          开始流程
-        </button>
-        <button class="action-btn action-stop" bindtap="stopPipeline" disabled="{{isActionRunning}}">
-          停止流程
-        </button>
-        <button class="action-btn action-export" bindtap="exportLatestGaussian" disabled="{{isActionRunning}}">
-          导出 Gaussian
-        </button>
-      </view>
-      <view class="action-tip" wx:if="{{actionMessage}}">{{actionMessage}}</view>
+    <view class="phase-list">
+      <block wx:for="{{backendPhases}}" wx:key="key">
+        <view class="phase-card {{item.statusClass}}">
+          <view class="phase-card-main">
+            <view class="phase-card-title">{{item.title}}</view>
+            <view class="phase-card-detail">{{item.detail}}</view>
+          </view>
+          <view class="phase-card-state">{{item.state}}</view>
+        </view>
+      </block>
     </view>
 
     <view class="updated-at">最近刷新：{{lastUpdatedAt}}</view>
     <view class="error-tip" wx:if="{{backendError}}">{{backendError}}</view>
   </view>
 
-  <view class="panel pointcloud-panel">
-    <view class="panel-title">点云成果与下载</view>
-    <view class="panel-desc">
-      小程序端不内嵌 WebView；请复制下方链接到浏览器或电脑端打开。默认下载为裁切/下采样后的轻量点云。
+  <view class="panel viewer-panel">
+    <view class="panel-title">点云查看链接</view>
+    <view class="viewer-actions">
+      <button class="copy-btn copy-main" bindtap="copyViewerUrl">复制 Viewer 链接</button>
+      <button class="copy-btn copy-secondary" bindtap="copyDownloadsUrl">复制下载页</button>
+      <button class="copy-btn copy-secondary" bindtap="copyOptimizedLatestPointCloudUrl">复制优化点云</button>
+      <button class="copy-btn copy-secondary" bindtap="copyGaussianZipUrl">复制 ZIP</button>
     </view>
+    <view class="compact-note">小程序不内嵌 WebView，复制后用浏览器打开。</view>
+  </view>
 
+  <view class="panel refresh-panel">
+    <button class="refresh-wide" bindtap="refreshNow" loading="{{isRefreshing}}">
+      {{isRefreshing ? "刷新中" : "刷新后端状态"}}
+    </button>
+  </view>
+
+  <view class="panel metrics-panel">
+    <view class="panel-title">Gaussian 进度</view>
+    <view class="metrics-grid">
+      <view class="metric-item">
+        <text class="metric-label">Step</text>
+        <text class="metric-value">{{pipelineStepText}}</text>
+      </view>
+      <view class="metric-item">
+        <text class="metric-label">进度</text>
+        <text class="metric-value">{{pipelinePercentText}}</text>
+      </view>
+      <view class="metric-item">
+        <text class="metric-label">Loss</text>
+        <text class="metric-value">{{pipelineLossText}}</text>
+      </view>
+    </view>
+    <view class="metric-foot">上传 {{uploadedImagesText}} 张 · {{uploadStatsText}}</view>
+  </view>
+
+  <view class="panel action-panel">
+    <view class="panel-title">管理动作</view>
+    <input
+      class="token-input"
+      type="text"
+      placeholder="DASHBOARD_AUTH_TOKEN（未启用可留空）"
+      value="{{dashboardToken}}"
+      bindinput="onDashboardTokenInput"
+    />
+    <view class="action-row two-actions">
+      <button class="action-btn action-export" bindtap="exportLatestGaussian" disabled="{{isActionRunning}}">
+        点云导出
+      </button>
+      <button class="action-btn action-stop" bindtap="stopPipeline" disabled="{{isActionRunning}}">
+        停止训练
+      </button>
+    </view>
+    <view class="action-tip" wx:if="{{actionMessage}}">{{actionMessage}}</view>
+  </view>
+
+  <view class="panel logs-panel">
+    <view class="panel-title">后端最新日志</view>
+    <view wx:if="{{latestLogLines.length > 0}}" class="log-list">
+      <block wx:for="{{latestLogLines}}" wx:key="id">
+        <view class="log-line">{{item.text}}</view>
+      </block>
+    </view>
+    <view wx:else class="empty-tip compact">暂无日志</view>
+  </view>
+
+  <view class="panel pointcloud-panel">
+    <view class="panel-title">点云下载</view>
     <view class="pointcloud-summary">{{pointcloudSummaryText}}</view>
     <view class="error-tip" wx:if="{{pointcloudError}}">{{pointcloudError}}</view>
-
-    <view class="download-actions">
-      <button class="copy-btn copy-main" bindtap="copyOptimizedLatestPointCloudUrl">复制优化后最新点云</button>
-      <button class="copy-btn copy-secondary" bindtap="copyLatestPointCloudUrl">复制原始最新点云</button>
-      <button class="copy-btn copy-secondary" bindtap="copyGaussianZipUrl">复制 Gaussian ZIP</button>
-      <button class="copy-btn copy-secondary" bindtap="copyDownloadsUrl">复制下载页</button>
-    </view>
 
     <view wx:if="{{pointcloudList.length > 0}}" class="pointcloud-list">
       <block wx:for="{{pointcloudList}}" wx:key="id">
         <view class="pointcloud-item">
           <view class="pointcloud-head">
             <text class="pointcloud-name">{{item.name}}</text>
-            <text class="pointcloud-badge {{item.variant === 'gaussian' ? 'badge-gaussian' : ''}}">{{item.variant}}</text>
+            <text class="pointcloud-badge {{item.variant === 'gaussian' ? 'badge-gaussian' : ''}}">{{item.typeText}}</text>
           </view>
-          <view class="pointcloud-meta">场景：{{item.scene}} | 大小：{{item.sizeText}} | {{item.mtime}}</view>
+          <view class="pointcloud-meta">时间：{{item.mtime}}</view>
+          <view class="pointcloud-meta">大小：{{item.sizeText}}</view>
+          <view class="pointcloud-meta">场景：{{item.scene}}</view>
+          <view class="pointcloud-meta">类型：{{item.typeText}}</view>
           <view class="pointcloud-path">{{item.pathText}}</view>
           <view class="pointcloud-actions">
-            <button class="mini-copy-btn" data-url="{{item.downloadUrl}}" bindtap="copyPointcloudDownloadUrl">优化下载</button>
-            <button class="mini-copy-btn" data-url="{{item.rawUrl}}" bindtap="copyPointcloudRawUrl">原始下载</button>
+            <button class="mini-copy-btn" data-url="{{item.optimizedUrl}}" bindtap="copyPointcloudDownloadUrl">优化链接</button>
+            <button class="mini-copy-btn" data-url="{{item.rawUrl}}" bindtap="copyPointcloudRawUrl">原始链接</button>
             <button class="mini-copy-btn" data-url="{{item.zipUrl}}" bindtap="copyPointcloudZipUrl">ZIP</button>
           </view>
         </view>
@@ -139,116 +118,6 @@
 
     <view wx:else class="empty-tip">
       暂无可下载点云。训练完成或手动导出 Gaussian 后会显示在这里。
-    </view>
-  </view>
-
-  <view class="panel frame-panel">
-    <view class="panel-title">本地有效帧预览</view>
-    <swiper
-      wx:if="{{validFrames.length > 0}}"
-      class="frame-swiper"
-      current="{{currentIndex}}"
-      bindchange="onSwiperChange"
-      indicator-dots
-      circular
-      autoplay="{{false}}"
-    >
-      <block wx:for="{{validFrames}}" wx:key="ts">
-        <swiper-item>
-          <view class="frame-container">
-            <image
-              class="frame-image"
-              src="{{item.path}}"
-              mode="aspectFit"
-              binderror="onImageError"
-              lazy-load
-            />
-            <view class="frame-info">
-              帧{{index + 1}} | 清晰度：{{item.blurScore ? item.blurScore : 0}} | 时间戳：{{item.ts}}
-            </view>
-          </view>
-        </swiper-item>
-      </block>
-    </swiper>
-
-    <view wx:else class="empty-tip">
-      暂无本地有效帧。你仍可使用下方地址在浏览器访问后端。
-    </view>
-  </view>
-
-  <view class="panel links-panel">
-    <view class="panel-title">浏览器访问与联调地址</view>
-
-    <view class="link-block">
-      <view class="link-label">上传接口（POST /upload）</view>
-      <view class="url-box"><text class="url-text">{{uploadApi}}</text></view>
-      <button class="copy-btn" bindtap="copyUploadApiUrl">复制上传接口</button>
-    </view>
-
-    <view class="link-block">
-      <view class="link-label">Viewer（6006 / 训练阶段）</view>
-      <view class="url-box"><text class="url-text">{{viewerUrl}}</text></view>
-      <button class="copy-btn" bindtap="copyViewerUrl">复制 Viewer 地址</button>
-    </view>
-
-    <view class="link-block">
-      <view class="link-label">后端 UI（6008）</view>
-      <view class="url-box"><text class="url-text">{{dashboardUrl}}</text></view>
-      <button class="copy-btn" bindtap="copyDashboardUrl">复制后端 UI 地址</button>
-    </view>
-
-    <view class="link-block">
-      <view class="link-label">状态接口（GET /api/status）</view>
-      <view class="url-box"><text class="url-text">{{statusApiUrl}}</text></view>
-      <button class="copy-btn" bindtap="copyStatusApiUrl">复制状态接口地址</button>
-    </view>
-
-    <view class="link-block">
-      <view class="link-label">进度接口（GET /api/progress）</view>
-      <view class="url-box"><text class="url-text">{{progressApiUrl}}</text></view>
-      <button class="copy-btn" bindtap="copyProgressApiUrl">复制进度接口地址</button>
-    </view>
-
-    <view class="link-block">
-      <view class="link-label">日志接口（GET /api/logs?lines=200）</view>
-      <view class="url-box"><text class="url-text">{{logsApiUrl}}</text></view>
-      <button class="copy-btn" bindtap="copyLogsApiUrl">复制日志接口地址</button>
-    </view>
-
-    <view class="link-block">
-      <view class="link-label">启动接口（POST /api/pipeline/start）</view>
-      <view class="url-box"><text class="url-text">{{pipelineStartApiUrl}}</text></view>
-      <button class="copy-btn" bindtap="copyPipelineStartApiUrl">复制启动接口地址</button>
-    </view>
-
-    <view class="link-block">
-      <view class="link-label">停止接口（POST /api/pipeline/stop）</view>
-      <view class="url-box"><text class="url-text">{{pipelineStopApiUrl}}</text></view>
-      <button class="copy-btn" bindtap="copyPipelineStopApiUrl">复制停止接口地址</button>
-    </view>
-
-    <view class="link-block">
-      <view class="link-label">Gaussian 导出（POST /api/gaussian/export_latest）</view>
-      <view class="url-box"><text class="url-text">{{gaussianExportLatestApiUrl}}</text></view>
-      <button class="copy-btn" bindtap="copyGaussianExportApiUrl">复制导出接口地址</button>
-    </view>
-
-    <view class="link-block">
-      <view class="link-label">点云下载页（/downloads）</view>
-      <view class="url-box"><text class="url-text">{{downloadsUrl}}</text></view>
-      <button class="copy-btn" bindtap="copyDownloadsUrl">复制下载页地址</button>
-    </view>
-
-    <view class="link-block">
-      <view class="link-label">优化后最新点云直链（裁切/下采样）</view>
-      <view class="url-box"><text class="url-text">{{optimizedLatestPointCloudUrl}}</text></view>
-      <button class="copy-btn" bindtap="copyOptimizedLatestPointCloudUrl">复制优化后点云地址</button>
-    </view>
-
-    <view class="link-block">
-      <view class="link-label">原始最新点云直链（processed=false）</view>
-      <view class="url-box"><text class="url-text">{{latestPointCloudUrl}}</text></view>
-      <button class="copy-btn" bindtap="copyLatestPointCloudUrl">复制原始点云地址</button>
     </view>
   </view>
 

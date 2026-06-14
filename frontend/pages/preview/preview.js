@@ -21,6 +21,12 @@ function pickNumber(obj, keys) {
     if (typeof value === "number" && !Number.isNaN(value)) {
       return value;
     }
+    if (typeof value === "string" && value.trim() !== "") {
+      const parsed = Number(value);
+      if (!Number.isNaN(parsed)) {
+        return parsed;
+      }
+    }
   }
   return null;
 }
@@ -103,6 +109,7 @@ Page({
     validFrames: [],
     currentIndex: 0,
     uploadApi: BACKEND_LINKS.uploadApi,
+    uploadProxyHealthUrl: BACKEND_LINKS.uploadProxyHealthUrl,
     viewerUrl: BACKEND_LINKS.viewerUrl,
     dashboardUrl: BACKEND_LINKS.dashboardUrl,
     uploadStatsUrl: BACKEND_LINKS.uploadStatsUrl,
@@ -131,6 +138,12 @@ Page({
     pipelinePidText: "-",
     pipelineQueueText: "-",
     pipelineJobText: "-",
+    backendPhases: [
+      { key: "upload", title: "检测上传", state: "等待", detail: "-", statusClass: "pending" },
+      { key: "spann3r", title: "Spann3R 训练", state: "等待", detail: "-", statusClass: "pending" },
+      { key: "gaussian", title: "3DGaussian 训练", state: "等待", detail: "-", statusClass: "pending" },
+      { key: "completed", title: "训练完成", state: "等待", detail: "-", statusClass: "pending" }
+    ],
     phaseKey: "unknown",
     phaseActionHint: "等待后端阶段信息...",
     phaseCanUpload: false,
@@ -148,6 +161,7 @@ Page({
     pointcloudList: [],
     pointcloudError: "",
     logsSummaryText: "-",
+    latestLogLines: [],
     lastUpdatedAt: "-",
     dashboardToken: DASHBOARD_AUTH_TOKEN || "",
     isActionRunning: false,
@@ -309,19 +323,49 @@ Page({
     return url + (url.indexOf("?") >= 0 ? "&" : "?") + query;
   },
 
+  inferPointcloudType(obj) {
+    const variant = (obj.variant || "other").toLowerCase();
+    const name = (obj.name || "").toLowerCase();
+    const path = (obj.path || "").toLowerCase();
+    const stepMatch = name.match(/(?:step|iter|iteration)[_-]?(\d+)/) || path.match(/(?:step|iter|iteration)[_-]?(\d+)/);
+    const stepText = stepMatch ? " · " + stepMatch[1] + "步" : "";
+    if (variant === "gaussian") {
+      if (name.indexOf("clipped") >= 0 || name.indexOf("downsample") >= 0) {
+        return "3DGaussian" + stepText + " · 裁切/下采样";
+      }
+      return "3DGaussian" + stepText + " · 原始";
+    }
+    if (variant === "downsampled") {
+      return "Spann3R · 下采样";
+    }
+    if (variant === "train") {
+      return "Spann3R · 训练输入";
+    }
+    if (variant === "raw") {
+      return "Spann3R · 原始";
+    }
+    return variant || "其他";
+  },
+
   normalizePointcloudItem(item) {
     const obj = toObject(item);
     const sizeValue = Number(obj.size_bytes);
     const downloadUrl = this.toDashboardAbsoluteUrl(obj.download_url || "");
+    const scene = obj.scene || "-";
+    const encodedScene = scene && scene !== "-" ? encodeURIComponent(scene) : "";
+    const prefer = obj.variant || "gaussian";
+    const sceneBaseUrl = encodedScene ? this.toDashboardAbsoluteUrl("/download/scene/" + encodedScene + "?prefer=" + prefer) : downloadUrl;
     return {
       id: obj.id || "",
-      scene: obj.scene || "-",
+      scene: scene,
       variant: obj.variant || "other",
+      typeText: this.inferPointcloudType(obj),
       name: obj.name || "-",
       sizeText: Number.isFinite(sizeValue) ? formatBytes(sizeValue) : "-",
       mtime: obj.mtime || "-",
+      optimizedUrl: this.withQuery(sceneBaseUrl, "processed=true"),
       downloadUrl: downloadUrl,
-      rawUrl: this.withQuery(downloadUrl, "processed=false"),
+      rawUrl: this.withQuery(sceneBaseUrl, "processed=false"),
       zipUrl: this.toDashboardAbsoluteUrl("/download/zip?ids=" + (obj.id || "")),
       pathText: clipText(obj.path || "", 90)
     };
@@ -364,14 +408,13 @@ Page({
   },
 
   canUploadByPhase(phase) {
-    return phase === "idle" || phase === "input" || phase === "stopped" || phase === "unknown";
+    return phase === "idle" || phase === "input" || phase === "upload" || phase === "stopped" || phase === "unknown";
   },
 
   getPhaseState(phase, uploadHealthy, dashboardHealthy) {
     const phaseKey = phase || "unknown";
-    const gatewayHealthy = Boolean(uploadHealthy || dashboardHealthy);
-    const canUpload = this.canUploadByPhase(phaseKey) && gatewayHealthy;
-    const viewerLikelyReady = phaseKey === "gaussian" || phaseKey === "completed" || !uploadHealthy;
+    const canUpload = this.canUploadByPhase(phaseKey) && Boolean(uploadHealthy);
+    const viewerLikelyReady = phaseKey === "gaussian" || phaseKey === "export" || phaseKey === "completed";
     if (phaseKey === "input") {
       return {
         phaseKey: phaseKey,
@@ -399,6 +442,15 @@ Page({
         phaseCanDownload: true
       };
     }
+    if (phaseKey === "export") {
+      return {
+        phaseKey: phaseKey,
+        phaseActionHint: "当前为 export 阶段：训练已结束，正在导出可下载点云。",
+        phaseCanUpload: false,
+        phaseCanViewer: viewerLikelyReady,
+        phaseCanDownload: true
+      };
+    }
     if (phaseKey === "completed") {
       return {
         phaseKey: phaseKey,
@@ -415,6 +467,15 @@ Page({
         phaseCanUpload: canUpload,
         phaseCanViewer: viewerLikelyReady,
         phaseCanDownload: false
+      };
+    }
+    if (phaseKey === "failed") {
+      return {
+        phaseKey: phaseKey,
+        phaseActionHint: "流程执行失败，请查看后端最新日志。",
+        phaseCanUpload: false,
+        phaseCanViewer: false,
+        phaseCanDownload: this.data.pointcloudList.length > 0
       };
     }
     return {
@@ -455,32 +516,138 @@ Page({
     };
   },
 
-  buildLogsSummaryText(data) {
+  buildBackendPhases(progressData, uploadHealthOk, dashboardHealthOk, statusData) {
+    const phase = progressData.phaseKey || "unknown";
+    const runningText = statusData && statusData.runningText ? statusData.runningText : "-";
+    const sceneText = progressData.sceneNameText && progressData.sceneNameText !== "-" ? progressData.sceneNameText : "等待场景";
+    const stepText = progressData.stepText && progressData.stepText !== "-" ? progressData.stepText : "0";
+    const percentText = progressData.percentText && progressData.percentText !== "-" ? progressData.percentText : "0%";
+    const uploadedText = progressData.uploadedImagesText && progressData.uploadedImagesText !== "-" ? progressData.uploadedImagesText : "0";
+    const downloadReady = phase === "completed" || phase === "export" || this.data.pointcloudList.length > 0;
+
+    let uploadState = "等待";
+    let uploadClass = "pending";
+    let uploadDetail = dashboardHealthOk ? "状态服务已连接" : "等待后端状态服务";
+    if (uploadHealthOk && this.canUploadByPhase(phase)) {
+      uploadState = "可上传";
+      uploadClass = "running";
+      uploadDetail = "上传入口就绪，已接收 " + uploadedText + " 张";
+    } else if (uploadHealthOk) {
+      uploadState = "已完成";
+      uploadClass = "done";
+      uploadDetail = "上传阶段已关闭，进入后续训练";
+    } else if (dashboardHealthOk) {
+      uploadState = "待上传";
+      uploadClass = "warn";
+      uploadDetail = "状态服务正常，上传入口未就绪";
+    }
+
+    let spann3rState = "等待";
+    let spann3rClass = "pending";
+    let spann3rDetail = "等待上传稳定后开始";
+    if (phase === "spann3r") {
+      spann3rState = "运行中";
+      spann3rClass = "running";
+      spann3rDetail = "正在生成场景几何与相机位姿";
+    } else if (phase === "gaussian" || phase === "export" || phase === "completed") {
+      spann3rState = "已完成";
+      spann3rClass = "done";
+      spann3rDetail = sceneText;
+    } else if (phase === "stopped") {
+      spann3rState = "已停止";
+      spann3rClass = "warn";
+      spann3rDetail = "流程已停止，可重新开始";
+    }
+
+    let gaussianState = "等待";
+    let gaussianClass = "pending";
+    let gaussianDetail = "等待 Spann3R 输出";
+    if (phase === "gaussian") {
+      gaussianState = "训练中";
+      gaussianClass = "running";
+      gaussianDetail = "Step " + stepText + " | " + percentText;
+    } else if (phase === "export") {
+      gaussianState = "导出中";
+      gaussianClass = "running";
+      gaussianDetail = "训练完成，正在生成点云文件";
+    } else if (phase === "completed") {
+      gaussianState = "已完成";
+      gaussianClass = "done";
+      gaussianDetail = "训练与导出已结束";
+    } else if (phase === "stopped") {
+      gaussianState = "已停止";
+      gaussianClass = "warn";
+      gaussianDetail = runningText;
+    }
+
+    let completedState = "等待";
+    let completedClass = "pending";
+    let completedDetail = "完成后可查看 Viewer 与下载点云";
+    if (phase === "completed") {
+      completedState = "可查看";
+      completedClass = "done";
+      completedDetail = downloadReady ? "点云下载已准备" : "训练完成，等待点云列表刷新";
+    } else if (phase === "gaussian" || phase === "export") {
+      completedState = "生成中";
+      completedClass = "running";
+      completedDetail = phase === "export" ? "正在导出下载文件" : "等待 3DGaussian 输出";
+    } else if (phase === "stopped") {
+      completedState = "未完成";
+      completedClass = "warn";
+      completedDetail = "流程停止，结果可能不完整";
+    } else if (phase === "failed") {
+      completedState = "失败";
+      completedClass = "warn";
+      completedDetail = "查看最新日志定位失败原因";
+    }
+
+    return [
+      { key: "upload", title: "检测上传", state: uploadState, detail: uploadDetail, statusClass: uploadClass },
+      { key: "spann3r", title: "Spann3R 训练", state: spann3rState, detail: spann3rDetail, statusClass: spann3rClass },
+      { key: "gaussian", title: "3DGaussian 训练", state: gaussianState, detail: gaussianDetail, statusClass: gaussianClass },
+      { key: "completed", title: "训练完成", state: completedState, detail: completedDetail, statusClass: completedClass }
+    ];
+  },
+
+  buildLogsData(data) {
     const obj = toObject(data);
     const lines = Array.isArray(obj.lines) ? obj.lines : [];
     if (lines.length === 0) {
-      return "lines:0 | latest:-";
+      return { text: "lines:0 | latest:-", items: [] };
     }
     const latestLine = lines[lines.length - 1];
-    return "lines:" + lines.length + " | latest:" + clipText(latestLine, 100);
+    return {
+      text: "lines:" + lines.length + " | latest:" + clipText(latestLine, 100),
+      items: lines.slice(-5).map((line, index) => ({
+        id: String(index),
+        text: clipText(line, 140)
+      }))
+    };
   },
 
   refreshFast() {
     return Promise.allSettled([
       this.requestGet(this.data.dashboardHealthUrl),
+      this.requestGet(this.data.uploadProxyHealthUrl),
       this.requestGet(this.data.uploadStatsUrl),
       this.requestGet(this.data.statusApiUrl),
       this.requestGet(this.data.progressApiUrl)
     ]).then((resultList) => {
       const dashboardHealthOk = resultList[0].status === "fulfilled" &&
         Boolean(resultList[0].value && typeof resultList[0].value === "object" && resultList[0].value.status === "ok");
-      const uploadHealthOk = dashboardHealthOk;
-      const uploadHealth = uploadHealthOk ? "正常（使用6008健康）" : "不可用";
+      const uploadHealthOk = resultList[1].status === "fulfilled" &&
+        Boolean(resultList[1].value && typeof resultList[1].value === "object" && resultList[1].value.status === "ok");
+      const uploadHealth = uploadHealthOk ? "正常" : "不可用";
       const dashboardHealth = dashboardHealthOk ? "正常" : "异常";
-      const uploadStats = resultList[1].status === "fulfilled" ? this.buildUploadStatsText(resultList[1].value) : "拉取失败";
+      const uploadStats = resultList[2].status === "fulfilled" ? this.buildUploadStatsText(resultList[2].value) : "拉取失败";
 
-      const statusData = resultList[2].status === "fulfilled" ? this.parseStatus(resultList[2].value) : { runningText: "拉取失败", pidText: "-" };
-      const progressData = resultList[3].status === "fulfilled" ? this.parseProgress(resultList[3].value) : {
+      const statusData = resultList[3].status === "fulfilled" ? this.parseStatus(resultList[3].value) : {
+        runningText: "拉取失败",
+        pidText: "-",
+        queueText: "-",
+        jobText: "-"
+      };
+      const progressData = resultList[4].status === "fulfilled" ? this.parseProgress(resultList[4].value) : {
         phaseKey: "unknown",
         stageText: "拉取失败",
         stepText: "-",
@@ -490,10 +657,12 @@ Page({
         percentText: "-"
       };
       const phaseState = this.getPhaseState(progressData.phaseKey, uploadHealthOk, dashboardHealthOk);
+      const backendPhases = this.buildBackendPhases(progressData, uploadHealthOk, dashboardHealthOk, statusData);
 
       this.fastPollFailed = resultList[0].status === "rejected" ||
-        resultList[2].status === "rejected" ||
-        resultList[3].status === "rejected";
+        resultList[1].status === "rejected" ||
+        resultList[3].status === "rejected" ||
+        resultList[4].status === "rejected";
       this.syncBackendError();
 
       this.setData({
@@ -504,6 +673,7 @@ Page({
         pipelinePidText: statusData.pidText,
         pipelineQueueText: statusData.queueText,
         pipelineJobText: statusData.jobText,
+        backendPhases: backendPhases,
         phaseKey: phaseState.phaseKey,
         phaseActionHint: phaseState.phaseActionHint,
         phaseCanUpload: phaseState.phaseCanUpload,
@@ -528,13 +698,14 @@ Page({
     return Promise.allSettled([
       this.requestGet(this.data.logsApiUrl)
     ]).then((resultList) => {
-      const logsSummary = resultList[0].status === "fulfilled" ? this.buildLogsSummaryText(resultList[0].value) : "拉取失败";
+      const logsData = resultList[0].status === "fulfilled" ? this.buildLogsData(resultList[0].value) : { text: "拉取失败", items: [] };
 
       this.mediumPollFailed = resultList.some((item) => item.status === "rejected");
       this.syncBackendError();
 
       this.setData({
-        logsSummaryText: logsSummary,
+        logsSummaryText: logsData.text,
+        latestLogLines: logsData.items,
         lastUpdatedAt: formatTime(Date.now())
       });
     }).catch(() => {

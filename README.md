@@ -283,6 +283,8 @@ idle → input → spann3r → gaussian → completed
 | `NS_QUIT_ON_TRAIN_COMPLETION` | 训练完成后自动退出 Viewer 并继续导出 |
 | `NS_EXPORT_AFTER_TRAIN` | 训练后是否自动导出 |
 | `GAUSSIAN_CROP_PADDING_RATIO` | Gaussian 裁切填充比例 |
+| `PIPELINE_STATE_FILE` | 后端统一任务状态 JSON，供前端状态页读取 |
+| `RESTART_UPLOAD_CLEANUP` | 重启时旧上传图片处理策略：`archive` / `delete` / `keep` |
 
 ## 每场景产出资产
 

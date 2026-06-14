@@ -4,10 +4,10 @@
 // 6008：管理 UI、状态接口、下载接口与 /upload-proxy 上传代理
 
 // 端口映射说明：
-// 后端 6006 -> 前端访问 https://u342234-a85f-8b002f1b.bjb1.seetacloud.com:8443
-// 后端 6008 -> 前端访问 https://uu342234-a85f-8b002f1b.bjb1.seetacloud.com:8443
-const DASHBOARD_BASE_URL = "https://uu342234-a85f-8b002f1b.bjb1.seetacloud.com:8443";
-const VIEWER_BASE_URL = "https://u342234-a85f-8b002f1b.bjb1.seetacloud.com:8443";
+// 后端 6006 -> 前端访问 https://u342234-lgwc-436004b2.bjb2.seetacloud.com:8443
+// 后端 6008 -> 前端访问 https://uu342234-lgwc-436004b2.bjb2.seetacloud.com:8443
+const DASHBOARD_BASE_URL = "https://uu342234-lgwc-436004b2.bjb2.seetacloud.com:8443";
+const VIEWER_BASE_URL = "https://u342234-lgwc-436004b2.bjb2.seetacloud.com:8443";
 const UPLOAD_PROXY_BASE_URL = `${DASHBOARD_BASE_URL}/upload-proxy`;
 const UPLOAD_TIMEOUT_MS = 20000;
 const MAX_UPLOAD_RETRY = 1;
@@ -21,6 +21,7 @@ const UPLOAD_API = `${UPLOAD_PROXY_BASE_URL}/upload`;
 
 const BACKEND_LINKS = {
   uploadApi: UPLOAD_API,
+  uploadProxyHealthUrl: `${UPLOAD_PROXY_BASE_URL}/healthz`,
   uploadStatsUrl: `${UPLOAD_PROXY_BASE_URL}/stats`,
   viewerUrl: `${VIEWER_BASE_URL}/`,
   dashboardUrl: `${DASHBOARD_BASE_URL}/`,
@@ -136,7 +137,7 @@ function uploadFramesToBackend(frameList, progressCallback, resultCallback) {
   const checkUploadServiceReady = function() {
     return new Promise(function(resolve) {
       wx.request({
-        url: BACKEND_LINKS.dashboardHealthUrl,
+        url: BACKEND_LINKS.uploadProxyHealthUrl,
         method: "GET",
         timeout: 5000,
         success: function(res) {
@@ -144,7 +145,7 @@ function uploadFramesToBackend(frameList, progressCallback, resultCallback) {
           if (statusCode < 200 || statusCode >= 300) {
             resolve({
               ok: false,
-              message: "健康检查失败（uu域名 /healthz）：HTTP " + statusCode
+              message: "上传服务检查失败（6008 /upload-proxy/healthz）：HTTP " + statusCode
             });
             return;
           }
@@ -159,14 +160,14 @@ function uploadFramesToBackend(frameList, progressCallback, resultCallback) {
           }
           resolve({
             ok: false,
-            message: "健康检查失败（uu域名 /healthz）：status!=ok"
+            message: "上传服务检查失败（6008 /upload-proxy/healthz）：status!=ok"
           });
         },
         fail: function(err) {
           var errMsg = err && err.errMsg ? err.errMsg : "network fail";
           resolve({
             ok: false,
-            message: "健康检查失败（uu域名 /healthz）：" + errMsg
+            message: "上传服务检查失败（6008 /upload-proxy/healthz）：" + errMsg
           });
         }
       });
@@ -227,7 +228,7 @@ function uploadFramesToBackend(frameList, progressCallback, resultCallback) {
             if (statusCode === 404) {
               resolve({
                 ok: false,
-                message: "上传接口404：请确认当前 phase=input，且网关已转发 /upload"
+                message: "上传接口404：6008 已连通，但 /upload-proxy/upload 不存在或未转发。请更新并重启后端 dashboard，确认 /upload-proxy/healthz 返回 ok。"
               });
               return;
             }
