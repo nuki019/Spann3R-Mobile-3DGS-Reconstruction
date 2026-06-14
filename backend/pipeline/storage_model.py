@@ -24,6 +24,16 @@ def build_image_fingerprint(images: Iterable[Path]) -> Tuple[Tuple[str, int, int
     return tuple((path.name, path.stat().st_size, path.stat().st_mtime_ns) for path in images)
 
 
+def advance_stability_rounds(
+    fingerprint: Tuple[Tuple[str, int, int], ...],
+    last_fingerprint: Tuple[Tuple[str, int, int], ...],
+    stable_rounds: int,
+) -> Tuple[Tuple[Tuple[str, int, int], ...], int, bool]:
+    if fingerprint == last_fingerprint:
+        return fingerprint, stable_rounds + 1, True
+    return fingerprint, 0, False
+
+
 def sanitize_scene_name(raw: str) -> str:
     cleaned = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in raw.strip())
     cleaned = cleaned.strip("_")

@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from pipeline.storage_model import (  # noqa: E402
+    advance_stability_rounds,
     build_image_fingerprint,
     build_scene_name,
     cleanup_upload_inputs,
@@ -73,6 +74,23 @@ def test_image_listing_and_scene_name() -> None:
         assert_true(scene_name.startswith("demo_scene_20260614_120000_"), "scene name prefix/timestamp changed")
         assert_equal(len(scene_name.rsplit("_", 1)[-1]), 8, "scene digest should be 8 chars")
     print("[OK] storage image listing and scene names")
+
+
+def test_stability_rounds() -> None:
+    previous = (("a.jpg", 10, 1),)
+    current_same = (("a.jpg", 10, 1),)
+    current_changed = (("a.jpg", 12, 2),)
+
+    fingerprint, rounds, is_stable = advance_stability_rounds(current_same, previous, 2)
+    assert_equal(fingerprint, current_same, "stable fingerprint should be returned")
+    assert_equal(rounds, 3, "stable rounds should increment")
+    assert_true(is_stable, "same fingerprint should be stable")
+
+    fingerprint, rounds, is_stable = advance_stability_rounds(current_changed, previous, 2)
+    assert_equal(fingerprint, current_changed, "changed fingerprint should be returned")
+    assert_equal(rounds, 0, "changed fingerprint should reset rounds")
+    assert_true(not is_stable, "changed fingerprint should not be stable")
+    print("[OK] storage stability rounds")
 
 
 def test_snapshot_latest_and_prune() -> None:
@@ -143,6 +161,7 @@ def test_upload_cleanup_modes() -> None:
 
 def main() -> None:
     test_image_listing_and_scene_name()
+    test_stability_rounds()
     test_snapshot_latest_and_prune()
     test_upload_cleanup_modes()
     print("[OK] storage model checks passed")

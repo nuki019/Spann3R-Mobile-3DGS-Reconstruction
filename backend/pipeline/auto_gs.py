@@ -24,6 +24,7 @@ from pipeline.job_queue import (
     sanitize_job_id,
 )
 from pipeline.storage_model import (
+    advance_stability_rounds,
     build_image_fingerprint as build_storage_image_fingerprint,
     build_scene_name as build_storage_scene_name,
     cleanup_upload_inputs,
@@ -177,16 +178,18 @@ def wait_until_upload_stable(
         image_count = len(images)
         if image_count >= config.min_img_count:
             fingerprint = build_image_fingerprint(images)
-            if fingerprint == last_fingerprint:
-                stable_rounds += 1
+            last_fingerprint, stable_rounds, is_stable = advance_stability_rounds(
+                fingerprint,
+                last_fingerprint,
+                stable_rounds,
+            )
+            if is_stable:
                 print(
                     f"⌛ 上传稳定检测中: {stable_rounds}/{config.stable_polls} | 图片数: {image_count}",
                     end="\r",
                 )
             else:
-                stable_rounds = 0
                 print(f"📈 已检测到图片: {image_count}，继续等待上传完成...", end="\r")
-            last_fingerprint = fingerprint
             if state_store:
                 state_store.update(
                     phase="input",
@@ -273,11 +276,12 @@ def wait_until_queued_job_stable(
 
             if image_count >= config.min_img_count:
                 fingerprint = build_job_image_fingerprint(images)
-                if fingerprint == last_fingerprint:
-                    stable_rounds += 1
-                else:
-                    stable_rounds = 0
-                stable_state[job_id] = (fingerprint, stable_rounds)
+                next_fingerprint, stable_rounds, _ = advance_stability_rounds(
+                    fingerprint,
+                    last_fingerprint,
+                    stable_rounds,
+                )
+                stable_state[job_id] = (next_fingerprint, stable_rounds)
                 print(
                     f"⏳ 队列任务 {job_id}: {stable_rounds}/{config.stable_polls} | 图片数: {image_count}",
                     end="\r",
