@@ -1,4 +1,3 @@
-import hashlib
 import os
 from pathlib import Path
 from typing import Dict, List
@@ -6,72 +5,32 @@ from typing import Dict, List
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 
-DEFAULT_ROOTS = [
-    "/root/autodl-tmp/gs_train",
-    "/root/autodl-tmp/Spann3R/output/demo",
-    "/root/autodl-tmp/Spann3R/output",
-]
+from services.pointcloud_index import (
+    DEFAULT_POINTCLOUD_ROOTS,
+    discover_pointclouds as discover_pointcloud_items,
+    index_by_id as index_pointclouds_by_id,
+    infer_pointcloud_variant as infer_pointcloud_variant_for_path,
+    parse_pointcloud_roots,
+    pick_preferred_pointcloud as pick_preferred_pointcloud_item,
+    under_allowed_roots as is_under_allowed_roots,
+)
 
-ROOTS = [
-    Path(item.strip()).resolve()
-    for item in os.getenv("POINTCLOUD_ROOTS", ",".join(DEFAULT_ROOTS)).split(",")
-    if item.strip()
-]
+DEFAULT_ROOTS = DEFAULT_POINTCLOUD_ROOTS
+ROOTS = parse_pointcloud_roots(os.getenv("POINTCLOUD_ROOTS", ""), DEFAULT_ROOTS)
 
 app = FastAPI(title="PointCloud Download Service")
 
 
 def under_allowed_roots(path: Path) -> bool:
-    resolved = path.resolve()
-    for root in ROOTS:
-        try:
-            resolved.relative_to(root)
-            return True
-        except ValueError:
-            continue
-    return False
+    return is_under_allowed_roots(path, ROOTS)
 
 
 def infer_pointcloud_variant(file_path: Path) -> str:
-    path_text = str(file_path).lower()
-    name = file_path.name.lower()
-    if "_gaussian_" in name or "gaussian_export" in path_text:
-        return "gaussian"
-    if name.startswith("point_cloud") and "splatfacto" in path_text:
-        return "gaussian"
-    if "_downsampled" in name:
-        return "downsampled"
-    if "_raw" in name:
-        return "raw"
-    if "_init" in name:
-        return "train"
-    return "other"
+    return infer_pointcloud_variant_for_path(file_path)
 
 
 def discover_pointclouds() -> List[Dict[str, str]]:
-    files: List[Path] = []
-    for root in ROOTS:
-        if root.exists():
-            files.extend(root.rglob("*.ply"))
-    files = sorted(files, key=lambda p: p.stat().st_mtime_ns, reverse=True)
-
-    payload = []
-    for file_path in files:
-        if not under_allowed_roots(file_path):
-            continue
-        file_id = hashlib.sha1(str(file_path).encode("utf-8")).hexdigest()[:16]
-        payload.append(
-            {
-                "id": file_id,
-                "name": file_path.name,
-                "variant": infer_pointcloud_variant(file_path),
-                "path": str(file_path),
-                "size_bytes": str(file_path.stat().st_size),
-                "mtime": str(file_path.stat().st_mtime),
-                "download_url": f"/download/{file_id}",
-            }
-        )
-    return payload
+    return discover_pointcloud_items(ROOTS)
 
 
 def pick_preferred_pointcloud(
@@ -79,40 +38,14 @@ def pick_preferred_pointcloud(
     prefer: str = "gaussian",
     strict: bool = False,
 ) -> Dict[str, str]:
-    if not items:
+    chosen = pick_preferred_pointcloud_item(items, prefer=prefer, strict=strict)
+    if not chosen:
         raise ValueError("empty pointcloud list")
-    prefer = (prefer or "gaussian").strip().lower()
-    if strict:
-        order_map = {
-            "gaussian": ("gaussian",),
-            "downsampled": ("downsampled",),
-            "train": ("train",),
-            "raw": ("raw",),
-            "other": ("other",),
-            "any": ("gaussian", "downsampled", "train", "raw", "other"),
-        }
-    else:
-        order_map = {
-            "gaussian": ("gaussian", "downsampled", "train", "raw", "other"),
-            "downsampled": ("downsampled", "train", "raw", "gaussian", "other"),
-            "train": ("train", "downsampled", "raw", "gaussian", "other"),
-            "raw": ("raw", "downsampled", "train", "gaussian", "other"),
-            "any": ("gaussian", "downsampled", "train", "raw", "other"),
-        }
-    for preferred_variant in order_map.get(prefer, order_map["gaussian"]):
-        for item in items:
-            if item.get("variant") == preferred_variant:
-                return item
-    if strict:
-        raise ValueError(f"no pointcloud matched prefer={prefer}")
-    return items[0]
+    return chosen
 
 
 def index_by_id() -> Dict[str, Path]:
-    mapping: Dict[str, Path] = {}
-    for item in discover_pointclouds():
-        mapping[item["id"]] = Path(item["path"])
-    return mapping
+    return index_pointclouds_by_id(discover_pointclouds())
 
 
 @app.get("/", response_class=HTMLResponse)

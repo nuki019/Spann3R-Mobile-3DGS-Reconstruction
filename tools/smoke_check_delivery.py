@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 PYTHON_FILES = [
     ROOT / "backend" / "services" / "backend_dashboard.py",
+    ROOT / "backend" / "services" / "pointcloud_download_server.py",
     ROOT / "backend" / "services" / "pointcloud_index.py",
     ROOT / "backend" / "services" / "upload_server.py",
     ROOT / "backend" / "pipeline" / "job_queue.py",
