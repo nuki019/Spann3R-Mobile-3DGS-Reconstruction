@@ -13,6 +13,19 @@ function testBasics() {
   assert.strictEqual(model.pickString({ name: "scene" }, ["name"]), "scene");
   assert.strictEqual(model.clipText("abcdef", 4), "abcd...");
   assert.strictEqual(model.asText({ ok: true }, 40), '{"ok":true}');
+  assert.deepStrictEqual(
+    model.buildCopyLinkTarget({ viewerUrl: "https://viewer.example" }, "viewerUrl"),
+    { content: "https://viewer.example", label: "Viewer 地址" },
+  );
+  assert.deepStrictEqual(model.buildCopyLinkTarget({ viewerUrl: "https://viewer.example" }, "missing"), {
+    content: "",
+    label: "",
+  });
+  assert.strictEqual(
+    model.pickDatasetUrl({ currentTarget: { dataset: { url: "https://files.example/a.ply" } } }),
+    "https://files.example/a.ply",
+  );
+  assert.strictEqual(model.pickDatasetUrl({}), "");
   console.log("[OK] preview state basics");
 }
 

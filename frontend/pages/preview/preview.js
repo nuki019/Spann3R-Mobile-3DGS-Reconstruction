@@ -497,71 +497,77 @@ Page({
     });
   },
 
+  copyConfiguredUrl(key) {
+    const target = previewState.buildCopyLinkTarget(this.data, key);
+    this.copyText(target.content, target.label);
+  },
+
+  copyDatasetUrl(e, label) {
+    this.copyText(previewState.pickDatasetUrl(e), label);
+  },
+
   copyUploadApiUrl() {
-    this.copyText(this.data.uploadApi, "上传接口地址");
+    this.copyConfiguredUrl("uploadApi");
   },
 
   copyViewerUrl() {
-    this.copyText(this.data.viewerUrl, "Viewer 地址");
+    this.copyConfiguredUrl("viewerUrl");
   },
 
   copyDashboardUrl() {
-    this.copyText(this.data.dashboardUrl, "后端 UI 地址");
+    this.copyConfiguredUrl("dashboardUrl");
   },
 
   copyStatusApiUrl() {
-    this.copyText(this.data.statusApiUrl, "状态接口地址");
+    this.copyConfiguredUrl("statusApiUrl");
   },
 
   copyProgressApiUrl() {
-    this.copyText(this.data.progressApiUrl, "进度接口地址");
+    this.copyConfiguredUrl("progressApiUrl");
   },
 
   copyLogsApiUrl() {
-    this.copyText(this.data.logsApiUrl, "日志接口地址");
+    this.copyConfiguredUrl("logsApiUrl");
   },
 
   copyPipelineStartApiUrl() {
-    this.copyText(this.data.pipelineStartApiUrl, "启动接口地址");
+    this.copyConfiguredUrl("pipelineStartApiUrl");
   },
 
   copyPipelineStopApiUrl() {
-    this.copyText(this.data.pipelineStopApiUrl, "停止接口地址");
+    this.copyConfiguredUrl("pipelineStopApiUrl");
   },
 
   copyGaussianExportApiUrl() {
-    this.copyText(this.data.gaussianExportLatestApiUrl, "Gaussian导出接口地址");
+    this.copyConfiguredUrl("gaussianExportLatestApiUrl");
   },
 
   copyDownloadsUrl() {
-    this.copyText(this.data.downloadsUrl, "点云下载列表地址");
+    this.copyConfiguredUrl("downloadsUrl");
   },
 
   copyLatestPointCloudUrl() {
-    this.copyText(this.data.latestPointCloudUrl, "最新点云地址");
+    this.copyConfiguredUrl("latestPointCloudUrl");
   },
 
   copyOptimizedLatestPointCloudUrl() {
-    this.copyText(this.data.optimizedLatestPointCloudUrl, "优化后最新点云地址");
+    this.copyConfiguredUrl("optimizedLatestPointCloudUrl");
   },
 
   copyGaussianZipUrl() {
-    this.copyText(this.data.gaussianZipUrl, "Gaussian打包下载地址");
+    this.copyConfiguredUrl("gaussianZipUrl");
   },
 
   copyPointcloudDownloadUrl(e) {
-    const url = e && e.currentTarget && e.currentTarget.dataset ? e.currentTarget.dataset.url : "";
-    this.copyText(url, "优化后点云地址");
+    this.copyDatasetUrl(e, "优化后点云地址");
   },
 
   copyPointcloudRawUrl(e) {
-    const url = e && e.currentTarget && e.currentTarget.dataset ? e.currentTarget.dataset.url : "";
-    this.copyText(url, "原始点云地址");
+    this.copyDatasetUrl(e, "原始点云地址");
   },
 
   copyPointcloudZipUrl(e) {
-    const url = e && e.currentTarget && e.currentTarget.dataset ? e.currentTarget.dataset.url : "";
-    this.copyText(url, "单文件ZIP地址");
+    this.copyDatasetUrl(e, "单文件ZIP地址");
   },
 
   goBack() {

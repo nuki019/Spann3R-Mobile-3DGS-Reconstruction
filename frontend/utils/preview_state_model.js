@@ -111,6 +111,41 @@ function withQuery(url, query) {
   return url + (url.indexOf("?") >= 0 ? "&" : "?") + query;
 }
 
+const COPY_LINK_LABELS = {
+  uploadApi: "上传接口地址",
+  viewerUrl: "Viewer 地址",
+  dashboardUrl: "后端 UI 地址",
+  statusApiUrl: "状态接口地址",
+  progressApiUrl: "进度接口地址",
+  logsApiUrl: "日志接口地址",
+  pipelineStartApiUrl: "启动接口地址",
+  pipelineStopApiUrl: "停止接口地址",
+  gaussianExportLatestApiUrl: "Gaussian导出接口地址",
+  downloadsUrl: "点云下载列表地址",
+  latestPointCloudUrl: "最新点云地址",
+  optimizedLatestPointCloudUrl: "优化后最新点云地址",
+  gaussianZipUrl: "Gaussian打包下载地址"
+};
+
+function buildCopyLinkTarget(data, key) {
+  const label = COPY_LINK_LABELS[key] || "";
+  if (!label) {
+    return { content: "", label: "" };
+  }
+  const obj = toObject(data);
+  return {
+    content: obj[key] || "",
+    label: label
+  };
+}
+
+function pickDatasetUrl(event) {
+  const dataset = event && event.currentTarget && event.currentTarget.dataset ?
+    event.currentTarget.dataset :
+    {};
+  return dataset.url || "";
+}
+
 function canUploadByPhase(phase) {
   return phasePolicy.canUploadByPhase(phase);
 }
@@ -682,6 +717,7 @@ module.exports = {
   buildBackendPhases,
   buildCancelFailureData,
   buildCancelSuccessData,
+  buildCopyLinkTarget,
   buildFastPollData,
   buildJobsData,
   buildLogsData,
@@ -702,6 +738,7 @@ module.exports = {
   normalizePointcloudItem,
   parseProgress,
   parseStatus,
+  pickDatasetUrl,
   pickNumber,
   pickString,
   toDashboardAbsoluteUrl,
