@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, Iterable, Optional, Tuple
 
 from pipeline.job_queue import job_images_dir, sanitize_job_id
+from pipeline.job_policy import can_upload_by_phase
 
 
 VALID_UPLOAD_EXTENSIONS = {".jpg", ".jpeg", ".png"}
@@ -92,4 +93,30 @@ def build_upload_response(
         "job_id": job_id,
         "queue_enabled": queue_enabled,
         "job": job,
+    }
+
+
+def build_upload_stats_payload(
+    phase: str,
+    queue_enabled: bool,
+    queue_summary: Dict[str, object],
+    uploaded_files: int,
+    uploaded_bytes: int,
+    save_dir: Path,
+    legacy_save_dir: Path,
+    max_file_size_mb: int,
+    active_job: Optional[Dict[str, object]],
+) -> Dict[str, object]:
+    return {
+        "status": "ok",
+        "phase": phase,
+        "allow_upload": queue_enabled or can_upload_by_phase(phase),
+        "queue_enabled": queue_enabled,
+        "queue": queue_summary if queue_enabled else {"count": 0, "queued": 0},
+        "uploaded_files": uploaded_files,
+        "uploaded_bytes": uploaded_bytes,
+        "save_dir": str(save_dir),
+        "legacy_save_dir": str(legacy_save_dir),
+        "max_file_size_mb": max_file_size_mb,
+        "active_job": active_job,
     }

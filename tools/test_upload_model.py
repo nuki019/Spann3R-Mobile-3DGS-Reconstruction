@@ -17,6 +17,7 @@ from services.upload_model import (  # noqa: E402
     build_upload_filename,
     build_upload_manifest_row,
     build_upload_response,
+    build_upload_stats_payload,
     resolve_upload_destination,
     sanitize_frame_index,
     validate_upload_suffix,
@@ -137,11 +138,59 @@ def test_upload_manifest_and_response() -> None:
     print("[OK] upload manifest and response model")
 
 
+def test_upload_stats_payload() -> None:
+    payload = build_upload_stats_payload(
+        phase="gaussian",
+        queue_enabled=True,
+        queue_summary={"count": 2, "queued": 1},
+        uploaded_files=3,
+        uploaded_bytes=456,
+        save_dir=Path("/tmp/queue"),
+        legacy_save_dir=Path("/tmp/watch"),
+        max_file_size_mb=25,
+        active_job={"id": "wx_01"},
+    )
+    assert_true(payload["allow_upload"], "queue mode should allow upload regardless of phase")
+    assert_equal(payload["queue"], {"count": 2, "queued": 1}, "queue summary changed")
+    assert_equal(payload["save_dir"], str(Path("/tmp/queue")), "queue save dir changed")
+    assert_equal(payload["legacy_save_dir"], str(Path("/tmp/watch")), "legacy save dir changed")
+    assert_equal(payload["active_job"], {"id": "wx_01"}, "active job changed")
+
+    legacy_blocked = build_upload_stats_payload(
+        phase="gaussian",
+        queue_enabled=False,
+        queue_summary={"count": 9, "queued": 9},
+        uploaded_files=0,
+        uploaded_bytes=0,
+        save_dir=Path("/tmp/watch"),
+        legacy_save_dir=Path("/tmp/watch"),
+        max_file_size_mb=25,
+        active_job=None,
+    )
+    assert_true(not legacy_blocked["allow_upload"], "legacy mode should block gaussian uploads")
+    assert_equal(legacy_blocked["queue"], {"count": 0, "queued": 0}, "legacy queue summary should be hidden")
+
+    legacy_allowed = build_upload_stats_payload(
+        phase="idle",
+        queue_enabled=False,
+        queue_summary={},
+        uploaded_files=0,
+        uploaded_bytes=0,
+        save_dir=Path("/tmp/watch"),
+        legacy_save_dir=Path("/tmp/watch"),
+        max_file_size_mb=25,
+        active_job=None,
+    )
+    assert_true(legacy_allowed["allow_upload"], "legacy idle uploads should be allowed")
+    print("[OK] upload stats payload model")
+
+
 def main() -> None:
     test_upload_suffix()
     test_frame_index_and_filename()
     test_upload_destination()
     test_upload_manifest_and_response()
+    test_upload_stats_payload()
     print("[OK] upload model checks passed")
 
 

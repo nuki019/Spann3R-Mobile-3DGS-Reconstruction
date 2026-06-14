@@ -58,6 +58,7 @@ from services.progress_model import (
     parse_progress,
 )
 from services.upload_model import (
+    build_upload_stats_payload,
     build_upload_manifest_row,
     build_upload_filename,
     build_upload_response,
@@ -399,19 +400,18 @@ def upload_stats_payload() -> Dict[str, object]:
     total_bytes = sum(item.stat().st_size for item in images)
     phase = current_phase_for_upload_gate()
     state = read_pipeline_state()
-    return {
-        "status": "ok",
-        "phase": phase,
-        "allow_upload": queue_enabled or can_upload_by_phase(phase),
-        "queue_enabled": queue_enabled,
-        "queue": summarize_jobs(queue_root) if queue_enabled else {"count": 0, "queued": 0},
-        "uploaded_files": len(images),
-        "uploaded_bytes": total_bytes,
-        "save_dir": str(queue_root if queue_enabled else watch_dir),
-        "legacy_save_dir": str(watch_dir),
-        "max_file_size_mb": UPLOAD_MAX_FILE_SIZE_MB,
-        "active_job": active_job_from_state(state, bool(get_running_pipeline_pid())),
-    }
+    running = bool(get_running_pipeline_pid())
+    return build_upload_stats_payload(
+        phase=phase,
+        queue_enabled=queue_enabled,
+        queue_summary=summarize_jobs(queue_root) if queue_enabled else {"count": 0, "queued": 0},
+        uploaded_files=len(images),
+        uploaded_bytes=total_bytes,
+        save_dir=queue_root if queue_enabled else watch_dir,
+        legacy_save_dir=watch_dir,
+        max_file_size_mb=UPLOAD_MAX_FILE_SIZE_MB,
+        active_job=active_job_from_state(state, running),
+    )
 
 
 async def save_uploaded_frame(
