@@ -6,15 +6,15 @@ import secrets
 from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
-from pipeline.job_queue import record_uploaded_frame
+from pipeline.job_queue import record_uploaded_frame, summarize_jobs
 from services.upload_model import (
+    build_upload_service_payload,
     build_upload_filename,
     build_upload_response,
     resolve_upload_destination,
     validate_upload_suffix,
 )
 
-VALID_EXTENSIONS = {".jpg", ".jpeg", ".png"}
 CHUNK_SIZE = 1024 * 1024
 
 SAVE_DIR = Path(os.getenv("UPLOAD_SAVE_DIR", "/root/autodl-tmp/input_images"))
@@ -59,9 +59,21 @@ def validate_token(form_token: str, header_token: str) -> None:
 
 def validate_file_extension(filename: str) -> str:
     try:
-        return validate_upload_suffix(filename, VALID_EXTENSIONS)
+        return validate_upload_suffix(filename)
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from None
+
+
+def service_payload() -> Dict[str, object]:
+    return build_upload_service_payload(
+        queue_enabled=QUEUE_ENABLED,
+        queue_summary=summarize_jobs(PIPELINE_JOB_ROOT) if QUEUE_ENABLED else {"count": 0, "queued": 0},
+        uploaded_files=UPLOAD_STATS["files"],
+        uploaded_bytes=UPLOAD_STATS["bytes"],
+        save_dir=SAVE_DIR,
+        queue_root=PIPELINE_JOB_ROOT,
+        max_file_size_mb=MAX_FILE_SIZE_MB,
+    )
 
 
 @app.get("/")
@@ -75,27 +87,12 @@ async def root():
 
 @app.get("/healthz")
 async def healthz():
-    return {
-        "status": "ok",
-        "save_dir": str(PIPELINE_JOB_ROOT if QUEUE_ENABLED else SAVE_DIR),
-        "legacy_save_dir": str(SAVE_DIR),
-        "queue_enabled": QUEUE_ENABLED,
-        "queue_root": str(PIPELINE_JOB_ROOT),
-        "allow_upload": True,
-    }
+    return service_payload()
 
 
 @app.get("/stats")
 async def stats():
-    return {
-        "uploaded_files": UPLOAD_STATS["files"],
-        "uploaded_bytes": UPLOAD_STATS["bytes"],
-        "save_dir": str(PIPELINE_JOB_ROOT if QUEUE_ENABLED else SAVE_DIR),
-        "legacy_save_dir": str(SAVE_DIR),
-        "queue_enabled": QUEUE_ENABLED,
-        "queue_root": str(PIPELINE_JOB_ROOT),
-        "max_file_size_mb": MAX_FILE_SIZE_MB,
-    }
+    return service_payload()
 
 
 @app.post("/upload")

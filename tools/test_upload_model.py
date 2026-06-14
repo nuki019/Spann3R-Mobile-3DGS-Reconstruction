@@ -18,6 +18,7 @@ from services.upload_model import (  # noqa: E402
     build_upload_filename,
     build_upload_manifest_row,
     build_upload_response,
+    build_upload_service_payload,
     build_upload_stats_payload,
     resolve_upload_destination,
     sanitize_frame_index,
@@ -194,6 +195,41 @@ def test_upload_stats_payload() -> None:
     print("[OK] upload stats payload model")
 
 
+def test_upload_service_payload() -> None:
+    queue_payload = build_upload_service_payload(
+        queue_enabled=True,
+        queue_summary={"count": 2, "queued": 1},
+        uploaded_files=5,
+        uploaded_bytes=2048,
+        save_dir=Path("/tmp/watch"),
+        queue_root=Path("/tmp/queue"),
+        max_file_size_mb=25,
+    )
+    assert_equal(queue_payload["status"], "ok", "service payload status changed")
+    assert_equal(queue_payload["phase"], "upload", "service payload phase changed")
+    assert_true(queue_payload["allow_upload"], "standalone upload service should allow uploads")
+    assert_equal(queue_payload["queue"], {"count": 2, "queued": 1}, "service queue summary changed")
+    assert_equal(queue_payload["save_dir"], str(Path("/tmp/queue")), "queue service save dir changed")
+    assert_equal(queue_payload["legacy_save_dir"], str(Path("/tmp/watch")), "service legacy save dir changed")
+    assert_equal(queue_payload["queue_root"], str(Path("/tmp/queue")), "service queue root changed")
+    assert_equal(queue_payload["uploaded_files"], 5, "service uploaded file count changed")
+    assert_equal(queue_payload["uploaded_bytes"], 2048, "service uploaded byte count changed")
+
+    legacy_payload = build_upload_service_payload(
+        queue_enabled=False,
+        queue_summary={"count": 9, "queued": 9},
+        uploaded_files=1,
+        uploaded_bytes=512,
+        save_dir=Path("/tmp/watch"),
+        queue_root=Path("/tmp/queue"),
+        max_file_size_mb=25,
+    )
+    assert_true(legacy_payload["allow_upload"], "standalone legacy upload phase should allow uploads")
+    assert_equal(legacy_payload["queue"], {"count": 0, "queued": 0}, "legacy service queue should be hidden")
+    assert_equal(legacy_payload["save_dir"], str(Path("/tmp/watch")), "legacy service save dir changed")
+    print("[OK] upload service payload model")
+
+
 def main() -> None:
     test_upload_suffix()
     test_frame_index_and_filename()
@@ -201,6 +237,7 @@ def main() -> None:
     test_upload_gate()
     test_upload_manifest_and_response()
     test_upload_stats_payload()
+    test_upload_service_payload()
     print("[OK] upload model checks passed")
 
 

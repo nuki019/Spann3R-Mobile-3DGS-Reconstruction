@@ -124,3 +124,28 @@ def build_upload_stats_payload(
         "max_file_size_mb": max_file_size_mb,
         "active_job": active_job,
     }
+
+
+def build_upload_service_payload(
+    queue_enabled: bool,
+    queue_summary: Dict[str, object],
+    uploaded_files: int,
+    uploaded_bytes: int,
+    save_dir: Path,
+    queue_root: Path,
+    max_file_size_mb: int,
+    phase: str = "upload",
+) -> Dict[str, object]:
+    payload = build_upload_stats_payload(
+        phase=phase,
+        queue_enabled=queue_enabled,
+        queue_summary=queue_summary,
+        uploaded_files=uploaded_files,
+        uploaded_bytes=uploaded_bytes,
+        save_dir=queue_root if queue_enabled else save_dir,
+        legacy_save_dir=save_dir,
+        max_file_size_mb=max_file_size_mb,
+        active_job=None,
+    )
+    payload["queue_root"] = str(queue_root)
+    return payload
