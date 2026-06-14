@@ -194,6 +194,13 @@ docs/screenshots/
 docs/report_render/
 outputs/
 
+# Local benchmark/report scratch files. Keep out of Git until scrubbed.
+/docs/data/metrics_summary_1000iter.json
+/tools/export_three_test_details.py
+/tools/remote_benchmark_*.py
+/tools/render_pointcloud_comparison.py
+/tools/summarize_three_card_benchmark.py
+
 # Model weights (too large for git)
 checkpoints/
 
