@@ -209,35 +209,15 @@ Page({
   },
 
   inferPointcloudType(obj) {
-    const variant = (obj.variant || "other").toLowerCase();
-    const name = (obj.name || "").toLowerCase();
-    const path = (obj.path || "").toLowerCase();
-    const stepMatch = name.match(/(?:step|iter|iteration)[_-]?(\d+)/) || path.match(/(?:step|iter|iteration)[_-]?(\d+)/);
-    const stepText = stepMatch ? " · " + stepMatch[1] + "步" : "";
-    if (variant === "gaussian") {
-      if (name.indexOf("clipped") >= 0 || name.indexOf("downsample") >= 0) {
-        return "3DGaussian" + stepText + " · 裁切/下采样";
-      }
-      return "3DGaussian" + stepText + " · 原始";
-    }
-    if (variant === "downsampled") {
-      return "Spann3R · 下采样";
-    }
-    if (variant === "train") {
-      return "Spann3R · 训练输入";
-    }
-    if (variant === "raw") {
-      return "Spann3R · 原始";
-    }
-    return variant || "其他";
+    return previewState.inferPointcloudType(obj);
   },
 
   normalizePointcloudItem(item) {
-    return previewState.normalizePointcloudItem(item, this.data.dashboardUrl, (obj) => this.inferPointcloudType(obj));
+    return previewState.normalizePointcloudItem(item, this.data.dashboardUrl);
   },
 
   buildPointcloudSummary(data) {
-    return previewState.buildPointcloudSummary(data, this.data.dashboardUrl, (obj) => this.inferPointcloudType(obj));
+    return previewState.buildPointcloudSummary(data, this.data.dashboardUrl);
   },
 
   jobStatusText(status) {

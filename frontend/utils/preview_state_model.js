@@ -151,6 +151,31 @@ function normalizeJobItem(item, index, statusTextFn) {
   };
 }
 
+function inferPointcloudType(obj) {
+  const item = toObject(obj);
+  const variant = (item.variant || "other").toLowerCase();
+  const name = (item.name || "").toLowerCase();
+  const path = (item.path || "").toLowerCase();
+  const stepMatch = name.match(/(?:step|iter|iteration)[_-]?(\d+)/) || path.match(/(?:step|iter|iteration)[_-]?(\d+)/);
+  const stepText = stepMatch ? " · " + stepMatch[1] + "步" : "";
+  if (variant === "gaussian") {
+    if (name.indexOf("clipped") >= 0 || name.indexOf("downsample") >= 0) {
+      return "3DGaussian" + stepText + " · 裁切/下采样";
+    }
+    return "3DGaussian" + stepText + " · 原始";
+  }
+  if (variant === "downsampled") {
+    return "Spann3R · 下采样";
+  }
+  if (variant === "train") {
+    return "Spann3R · 训练输入";
+  }
+  if (variant === "raw") {
+    return "Spann3R · 原始";
+  }
+  return variant || "其他";
+}
+
 function normalizePointcloudItem(item, dashboardUrl, typeTextFn) {
   const obj = toObject(item);
   const sizeValue = Number(obj.size_bytes);
@@ -161,7 +186,7 @@ function normalizePointcloudItem(item, dashboardUrl, typeTextFn) {
   const sceneBaseUrl = encodedScene ?
     toDashboardAbsoluteUrl("/download/scene/" + encodedScene + "?prefer=" + prefer, dashboardUrl) :
     downloadUrl;
-  const labelFn = typeof typeTextFn === "function" ? typeTextFn : function(value) { return value.variant || "other"; };
+  const labelFn = typeof typeTextFn === "function" ? typeTextFn : inferPointcloudType;
   return {
     id: obj.id || "",
     scene: scene,
@@ -513,6 +538,7 @@ module.exports = {
   clipText,
   formatBytes,
   getPhaseState,
+  inferPointcloudType,
   jobStatusClass,
   normalizeJobItem,
   normalizePointcloudItem,

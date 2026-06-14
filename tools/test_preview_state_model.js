@@ -47,6 +47,22 @@ function testJobNormalization() {
 }
 
 function testPointcloudNormalization() {
+  assert.strictEqual(
+    model.inferPointcloudType({
+      variant: "gaussian",
+      name: "scene_gaussian_clipped_step1000.ply",
+    }),
+    "3DGaussian · 1000步 · 裁切/下采样",
+  );
+  assert.strictEqual(
+    model.inferPointcloudType({
+      variant: "gaussian",
+      path: "/root/autodl-tmp/scene/iteration_1000/raw.ply",
+    }),
+    "3DGaussian · 1000步 · 原始",
+  );
+  assert.strictEqual(model.inferPointcloudType({ variant: "downsampled" }), "Spann3R · 下采样");
+
   const item = model.normalizePointcloudItem(
     {
       id: "pc_1",
@@ -78,6 +94,7 @@ function testPointcloudNormalization() {
     { id: "pc_2", scene: "-", download_url: "https://files.example/pc_2.ply" },
     "https://dashboard.example",
   );
+  assert.strictEqual(absolute.typeText, "other");
   assert.strictEqual(absolute.downloadUrl, "https://files.example/pc_2.ply");
   assert.strictEqual(absolute.optimizedUrl, "https://files.example/pc_2.ply?processed=true");
   console.log("[OK] preview state pointcloud normalization");
