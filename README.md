@@ -336,6 +336,7 @@ scene_name/
 ```bash
 python tools/api_contract_check.py
 python tools/autodl_preflight_check.py --offline
+python tools/test_pipeline_models.py
 python tools/smoke_check_delivery.py
 git diff --check
 ```
@@ -346,6 +347,7 @@ git diff --check
 - 前端小程序 JS 文件语法
 - 后端关键 API 路由、前端队列入口、管理台队列入口合同检查
 - AutoDL 演示前检查脚本（离线模式检查仓库文件、配置和磁盘空间）
+- 队列任务模型与流水线状态文件模型测试
 - README、运维文档和示例配置是否含明显敏感信息
 - `.sh` 脚本 LF 换行配置
 - README 是否包含当前 6008 上传代理、1000 步训练和点云下载说明

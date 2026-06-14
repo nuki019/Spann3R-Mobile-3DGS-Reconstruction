@@ -23,6 +23,7 @@ PYTHON_FILES = [
     ROOT / "tools" / "smoke_check_delivery.py",
     ROOT / "tools" / "api_contract_check.py",
     ROOT / "tools" / "autodl_preflight_check.py",
+    ROOT / "tools" / "test_pipeline_models.py",
 ]
 
 JS_FILES = [
@@ -108,6 +109,7 @@ def check_required_text() -> None:
         "smoke_check_delivery.py",
         "api_contract_check.py",
         "autodl_preflight_check.py",
+        "test_pipeline_models.py",
         "6008",
         "点云下载",
         "RESTART_QUEUE_CLEANUP",
@@ -200,6 +202,19 @@ def check_api_contract_script() -> None:
     print(result.stdout.rstrip())
 
 
+def check_pipeline_model_tests() -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "test_pipeline_models.py")],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        fail(f"pipeline model tests failed\n{result.stdout}\n{result.stderr}")
+    print(result.stdout.rstrip())
+
+
 def check_job_queue_smoke() -> None:
     sys.path.insert(0, str(ROOT / "backend"))
     from pipeline.job_queue import (  # pylint: disable=import-outside-toplevel
@@ -261,6 +276,7 @@ def main() -> None:
     check_backend_routes()
     check_frontend_queue_entrypoints()
     check_api_contract_script()
+    check_pipeline_model_tests()
     check_job_queue_smoke()
     print("[OK] delivery smoke checks passed")
 
