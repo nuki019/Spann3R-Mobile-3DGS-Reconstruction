@@ -50,6 +50,19 @@ def write_config_file(
     path.write_text(render_env_text(values, defaults, editable_keys), encoding="utf-8")
 
 
+def merge_editable_values(
+    current_values: Mapping[str, str],
+    updates: Mapping[str, object],
+    editable_keys: Iterable[str],
+) -> Dict[str, str]:
+    merged = dict(current_values)
+    editable = set(editable_keys)
+    for key, value in updates.items():
+        if key in editable:
+            merged[key] = str(value).strip()
+    return merged
+
+
 def parse_bool_value(value: object, default: bool) -> bool:
     normalized = str(value or "").strip().lower()
     if not normalized:

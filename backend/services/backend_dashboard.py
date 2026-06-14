@@ -41,6 +41,7 @@ from services.pointcloud_index import (
 from services.config_model import (
     get_config_bool as get_config_bool_from_values,
     get_config_path as get_config_path_from_values,
+    merge_editable_values,
     read_config_file,
     write_config_file,
 )
@@ -1082,10 +1083,7 @@ async def api_config_meta():
 
 @app.post("/api/config")
 async def api_save_config(payload: ConfigUpdate, _: None = Depends(require_dashboard_token)):
-    values = read_env_file()
-    for key, value in payload.values.items():
-        if key in EDITABLE_KEYS:
-            values[key] = str(value).strip()
+    values = merge_editable_values(read_env_file(), payload.values, EDITABLE_KEYS)
     write_env_file(values)
     return {"ok": True, "values": values}
 

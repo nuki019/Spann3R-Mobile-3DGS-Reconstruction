@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 from services.config_model import (  # noqa: E402
     get_config_bool,
     get_config_path,
+    merge_editable_values,
     parse_bool_value,
     parse_env_text,
     read_config_file,
@@ -99,10 +100,32 @@ def test_bool_and_path_helpers() -> None:
     print("[OK] config bool and path helpers")
 
 
+def test_merge_editable_values() -> None:
+    merged = merge_editable_values(
+        {
+            "NS_MAX_NUM_ITERATIONS": "1000",
+            "PIPELINE_QUEUE_ENABLED": "true",
+            "WATCH_DIR": "/root/autodl-tmp/input_images",
+        },
+        {
+            "NS_MAX_NUM_ITERATIONS": " 1200 ",
+            "WATCH_DIR": Path("/tmp/input"),
+            "UNKNOWN_SECRET": "must-not-keep",
+        },
+        ["NS_MAX_NUM_ITERATIONS", "WATCH_DIR"],
+    )
+    assert_equal(merged["NS_MAX_NUM_ITERATIONS"], "1200", "editable numeric values should be trimmed")
+    assert_equal(merged["WATCH_DIR"], str(Path("/tmp/input")), "editable path-like values should stringify")
+    assert_equal(merged["PIPELINE_QUEUE_ENABLED"], "true", "non-updated values should be preserved")
+    assert_true("UNKNOWN_SECRET" not in merged, "unknown update keys must be ignored")
+    print("[OK] config editable merge")
+
+
 def main() -> None:
     test_parse_env_text()
     test_render_and_file_roundtrip()
     test_bool_and_path_helpers()
+    test_merge_editable_values()
     print("[OK] config model checks passed")
 
 
