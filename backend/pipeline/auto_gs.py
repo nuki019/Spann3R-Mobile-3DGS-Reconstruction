@@ -21,6 +21,8 @@ from pipeline.job_queue import (
     list_images as list_job_images,
     list_runnable_jobs,
     mark_job,
+    mark_queue_job_completed,
+    mark_queue_job_failed,
     sanitize_job_id,
 )
 from pipeline.storage_model import (
@@ -818,13 +820,12 @@ def run_pipeline_once(
         paths={"upload_cleanup": archive_summary},
     )
     if queue_job:
-        mark_job(
+        mark_queue_job_completed(
             config.pipeline_job_root,
-            str(queue_job.get("id") or queue_job.get("job_id") or scene_name),
-            "completed",
-            "训练与导出完成",
-            scene_name=scene_name,
-            extra={"artifacts": gaussian_artifacts, "scene_data_dir": str(scene_target_dir)},
+            queue_job,
+            scene_name,
+            gaussian_artifacts,
+            scene_target_dir,
         )
 
 
@@ -855,12 +856,10 @@ def main() -> None:
             paths = failed_state.get("paths") if isinstance(failed_state.get("paths"), dict) else {}
             queue_job_id = str(paths.get("queue_job_id") or "")
             if config.queue_enabled and queue_job_id:
-                mark_job(
+                mark_queue_job_failed(
                     config.pipeline_job_root,
                     queue_job_id,
-                    "failed",
-                    "训练失败",
-                    error=str(error),
+                    error,
                 )
             if config.run_once:
                 raise

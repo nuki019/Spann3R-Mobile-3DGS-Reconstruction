@@ -21,6 +21,9 @@ from pipeline.job_queue import (  # noqa: E402
     list_jobs,
     list_runnable_jobs,
     mark_job,
+    mark_queue_job_completed,
+    mark_queue_job_failed,
+    queue_job_id,
     read_job,
     record_uploaded_frame,
     sanitize_job_id,
@@ -190,6 +193,25 @@ def test_job_queue_model() -> None:
         assert_true(completed.get("completed_at"), "completed job should have completed_at")
         assert_equal(summarize_jobs(queue_root)["completed"], 1, "summary should count completed jobs")
 
+        assert_equal(queue_job_id({"job_id": "wx/session 01"}, "fallback"), job_id, "queue job id should use job_id")
+        assert_equal(queue_job_id({}, "scene/fallback"), "scene_fallback", "queue job id should use fallback")
+
+        completed_by_helper = mark_queue_job_completed(
+            queue_root,
+            {"id": job_id},
+            "scene_a",
+            {"gaussian": "/tmp/scene_a_gaussian.ply"},
+            Path("/tmp/scene_a"),
+        )
+        assert_equal(completed_by_helper["status"], "completed", "completed helper status changed")
+        assert_equal(completed_by_helper["scene_name"], "scene_a", "completed helper scene changed")
+        assert_equal(
+            completed_by_helper["artifacts"],
+            {"gaussian": "/tmp/scene_a_gaussian.ply"},
+            "completed helper artifacts changed",
+        )
+        assert_equal(completed_by_helper["scene_data_dir"], str(Path("/tmp/scene_a")), "completed helper data dir changed")
+
         (images_dir / "frame_002.jpg").write_bytes(b"post-complete")
         post_complete = record_uploaded_frame(
             queue_root,
@@ -214,10 +236,14 @@ def test_job_queue_model() -> None:
         (other_images / "frame.jpg").write_bytes(b"fake")
         record_uploaded_frame(queue_root, other_id, "frame.jpg", 4)
         mark_job(queue_root, other_id, "stopped", "cancelled")
+        failed_by_helper = mark_queue_job_failed(queue_root, {"job_id": other_id}, RuntimeError("synthetic failure"))
+        assert_equal(failed_by_helper["status"], "failed", "failed helper status changed")
+        assert_true("synthetic failure" in failed_by_helper["error"], "failed helper error changed")
+        assert_true(failed_by_helper.get("completed_at"), "failed helper should set completed_at")
         runnable_ids = {str(job.get("id")) for job in list_runnable_jobs(queue_root)}
         assert_true(other_id not in runnable_ids, "stopped job must not be runnable")
         summary = summarize_jobs(queue_root)
-        assert_equal(summary["stopped"], 1, "summary should count stopped jobs separately")
+        assert_equal(summary["failed"], 1, "summary should count failed jobs separately")
         cancel_missing = build_cancel_job_decision(list_jobs(queue_root), "missing/job")
         assert_equal(cancel_missing["job_id"], "missing_job", "missing cancel decision should sanitize id")
         assert_true(not cancel_missing["exists"], "missing job should not exist")

@@ -178,5 +178,45 @@ def mark_job(
     return write_job(queue_root, payload)
 
 
+def queue_job_id(job: Dict[str, object], fallback: str = "") -> str:
+    raw_id = ""
+    if isinstance(job, dict):
+        raw_id = str(job.get("id") or job.get("job_id") or "")
+    raw_id = raw_id or fallback
+    return sanitize_job_id(raw_id) if raw_id else ""
+
+
+def mark_queue_job_completed(
+    queue_root: Path,
+    job: Dict[str, object],
+    scene_name: str,
+    artifacts: Dict[str, object],
+    scene_data_dir: Path,
+    message: str = "训练与导出完成",
+) -> Dict[str, object]:
+    safe_id = queue_job_id(job, scene_name)
+    return mark_job(
+        queue_root,
+        safe_id,
+        "completed",
+        message,
+        scene_name=scene_name,
+        extra={"artifacts": artifacts, "scene_data_dir": str(scene_data_dir)},
+    )
+
+
+def mark_queue_job_failed(
+    queue_root: Path,
+    job_or_id: object,
+    error: object,
+    message: str = "训练失败",
+) -> Dict[str, object]:
+    if isinstance(job_or_id, dict):
+        safe_id = queue_job_id(job_or_id, "unknown")
+    else:
+        safe_id = sanitize_job_id(str(job_or_id or "unknown"))
+    return mark_job(queue_root, safe_id, "failed", message, error=str(error))
+
+
 def summarize_jobs(queue_root: Path) -> Dict[str, object]:
     return summarize_job_statuses(list_jobs(queue_root))

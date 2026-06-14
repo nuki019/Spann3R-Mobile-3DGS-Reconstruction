@@ -23,7 +23,7 @@ from pipeline.auto_gs import (
     wait_until_queued_job_stable,
     wait_until_upload_stable,
 )
-from pipeline.job_queue import mark_job, sanitize_job_id
+from pipeline.job_queue import mark_queue_job_completed, mark_queue_job_failed, sanitize_job_id
 from pipeline.task_state import PipelineStateStore
 
 
@@ -161,12 +161,10 @@ def main() -> None:
                 paths = failed_state.get("paths") if isinstance(failed_state.get("paths"), dict) else {}
                 queue_job_id = str(paths.get("queue_job_id") or "")
                 if queue_job_id:
-                    mark_job(
+                    mark_queue_job_failed(
                         config.pipeline_job_root,
                         queue_job_id,
-                        "failed",
-                        "训练失败",
-                        error=str(error),
+                        error,
                     )
                 print(f"\n❌ 队列任务异常: {error}")
                 if config.run_once:
@@ -310,22 +308,19 @@ def main() -> None:
             artifacts=gaussian_artifacts,
         )
         if queue_job:
-            mark_job(
+            mark_queue_job_completed(
                 config.pipeline_job_root,
-                str(queue_job.get("id") or queue_job.get("job_id") or scene_name),
-                "completed",
-                "训练与导出完成",
-                scene_name=scene_name,
-                extra={"artifacts": gaussian_artifacts, "scene_data_dir": str(scene_target_dir)},
+                queue_job,
+                scene_name,
+                gaussian_artifacts,
+                scene_target_dir,
             )
     except Exception as error:
         if "queue_job" in locals() and queue_job:
-            mark_job(
+            mark_queue_job_failed(
                 config.pipeline_job_root,
-                str(queue_job.get("id") or queue_job.get("job_id") or "unknown"),
-                "failed",
-                "训练失败",
-                error=str(error),
+                queue_job,
+                error,
             )
         state_store.fail(error)
         raise
