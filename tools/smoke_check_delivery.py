@@ -21,6 +21,7 @@ PYTHON_FILES = [
     ROOT / "backend" / "pipeline" / "auto_gs.py",
     ROOT / "backend" / "pipeline" / "backend_4090.py",
     ROOT / "tools" / "smoke_check_delivery.py",
+    ROOT / "tools" / "api_contract_check.py",
 ]
 
 JS_FILES = [
@@ -104,6 +105,7 @@ def check_required_text() -> None:
         "upload-proxy",
         "NS_MAX_NUM_ITERATIONS",
         "smoke_check_delivery.py",
+        "api_contract_check.py",
         "6008",
         "点云下载",
         "RESTART_QUEUE_CLEANUP",
@@ -183,6 +185,19 @@ def check_frontend_queue_entrypoints() -> None:
     print("[OK] frontend queue entrypoints")
 
 
+def check_api_contract_script() -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "api_contract_check.py")],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        fail(f"api contract check failed\n{result.stdout}\n{result.stderr}")
+    print(result.stdout.rstrip())
+
+
 def check_job_queue_smoke() -> None:
     sys.path.insert(0, str(ROOT / "backend"))
     from pipeline.job_queue import (  # pylint: disable=import-outside-toplevel
@@ -243,6 +258,7 @@ def main() -> None:
     check_required_text()
     check_backend_routes()
     check_frontend_queue_entrypoints()
+    check_api_contract_script()
     check_job_queue_smoke()
     print("[OK] delivery smoke checks passed")
 

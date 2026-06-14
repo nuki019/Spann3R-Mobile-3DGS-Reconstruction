@@ -6,6 +6,8 @@
 
 - 训练流程控制（启动/停止）
 - 上传照片实时监控（数量、最近文件）
+- 任务队列监控（排队、运行、完成、失败统计）
+- 取消尚未开始的排队任务
 - 训练进度监控（阶段、step、loss、日志）
 - 三阶段进度切换（输入监测 -> Spann3R 重建 -> Gaussian 训练/导出）
 - 参数调节（附中文解释）
@@ -24,7 +26,8 @@ bash start_backend_ui.sh
 ```
 
 - Dashboard 端口：`6008`
-- 上传与 Viewer 端口：`6006`
+- 上传代理、管理台和下载页：`6008`
+- Viewer 端口：`6006`
 
 ## 3. 关键页面与接口
 
@@ -40,6 +43,7 @@ bash start_backend_ui.sh
 - `/api/logs?lines=200`
 - `/api/uploads/summary`
 - `/api/scenes/summary`
+- `/api/jobs`
 
 ### 3.3 管理接口
 
@@ -47,6 +51,7 @@ bash start_backend_ui.sh
 - `POST /api/pipeline/stop`
 - `POST /api/config`
 - `POST /api/uploads/clear`
+- `POST /api/jobs/{job_id}/cancel`
 - `POST /api/pointclouds/clear`
 - `POST /api/gaussian/export_latest`
 
@@ -71,10 +76,12 @@ bash start_backend_ui.sh
 新增目录约定：
 
 - 场景训练数据：`SCENE_DATA_ROOT`（默认 `/root/autodl-tmp/gs_train/scenes`）
+- 队列任务输入：`PIPELINE_JOB_ROOT`（默认 `/root/autodl-tmp/pipeline_jobs`）
+- 队列任务归档：`PIPELINE_JOB_ARCHIVE_ROOT`（默认 `/root/autodl-tmp/pipeline_jobs_archive`）
 - 测试照片留存：`TEST_PHOTO_ROOT`（默认 `/root/autodl-tmp/Spann3R/test_photo_sets`）
 - 场景命名前缀：`SCENE_NAME_PREFIX`
 
-每次有效上传触发后，会自动生成新场景目录，便于后续多场景管理改造。
+每次有效上传会按 session 生成队列任务，训练流程按单卡顺序消费，并为每个任务生成独立场景目录。
 
 ## 5. 注意事项
 

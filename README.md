@@ -334,6 +334,7 @@ scene_name/
 提交或演示前建议运行：
 
 ```bash
+python tools/api_contract_check.py
 python tools/smoke_check_delivery.py
 git diff --check
 ```
@@ -342,6 +343,7 @@ git diff --check
 
 - 后端核心 Python 文件语法
 - 前端小程序 JS 文件语法
+- 后端关键 API 路由、前端队列入口、管理台队列入口合同检查
 - README、运维文档和示例配置是否含明显敏感信息
 - `.sh` 脚本 LF 换行配置
 - README 是否包含当前 6008 上传代理、1000 步训练和点云下载说明

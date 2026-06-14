@@ -1111,6 +1111,17 @@ async def index() -> str:
     .phase-running { color: #fbbf24; }
     .phase-done { color: #4ade80; }
     .phase-pending { color: #93c5fd; }
+    .job-list { max-height: 220px; }
+    .job-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .job-main { min-width: 0; flex: 1; }
+    .job-main strong { display: block; color: #fff; overflow-wrap: anywhere; }
+    .job-meta { color: var(--muted); font-size: 12px; margin-top: 3px; overflow-wrap: anywhere; }
+    .job-status { display: inline-block; min-width: 56px; text-align: center; border-radius: 999px; padding: 3px 7px; font-size: 12px; background: #172554; color: #bfdbfe; }
+    .job-status.running { background: #1e3a8a; color: #93c5fd; }
+    .job-status.completed { background: #14532d; color: #86efac; }
+    .job-status.failed, .job-status.stopped { background: #7f1d1d; color: #fecaca; }
+    .job-cancel { flex-shrink: 0; background: var(--danger); color: #fff; padding: 6px 9px; font-size: 12px; margin: 0; }
+    .job-cancel[disabled] { cursor: not-allowed; opacity: .45; filter: grayscale(1); }
     .cfg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
     .cfg-item { border: 1px solid var(--line); border-radius: 10px; padding: 8px; background: #0f1a30; }
     .cfg-item label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 6px; }
@@ -1171,6 +1182,12 @@ async def index() -> str:
       </div>
 
       <div class="card">
+        <h2>任务队列</h2>
+        <div id="jobSummary" class="line"></div>
+        <ul id="jobList" class="mini-list job-list"></ul>
+      </div>
+
+      <div class="card">
         <h2>场景资产监控</h2>
         <div id="sceneSummary" class="line"></div>
         <ul id="sceneList" class="mini-list"></ul>
@@ -1209,9 +1226,26 @@ async def index() -> str:
       completed: "已完成",
       stopped: "已停止"
     };
+    const JOB_STATUS_LABELS = {
+      queued: "排队中",
+      uploading: "上传中",
+      ready: "待训练",
+      running: "训练中",
+      completed: "已完成",
+      failed: "失败",
+      stopped: "已取消"
+    };
 
     function phaseLabel(phase) {
       return PHASE_LABELS[phase] || phase || "空闲";
+    }
+
+    function jobStatusLabel(status) {
+      return JOB_STATUS_LABELS[status] || status || "-";
+    }
+
+    function canCancelJob(status) {
+      return status === "queued" || status === "uploading" || status === "ready";
     }
 
     function getAuthToken() {
@@ -1285,6 +1319,67 @@ async def index() -> str:
       });
     }
 
+    function renderJobs(data) {
+      const summary = data.summary || {};
+      const items = Array.isArray(data.items) ? data.items : [];
+      document.getElementById("jobSummary").textContent =
+        `任务: ${summary.count ?? 0} | 排队: ${summary.queued ?? 0} | 运行: ${summary.running ?? 0} | 完成: ${summary.completed ?? 0} | 失败: ${summary.failed ?? 0}`;
+
+      const list = document.getElementById("jobList");
+      list.innerHTML = "";
+      if (!items.length) {
+        const li = document.createElement("li");
+        li.textContent = "暂无队列任务。";
+        list.appendChild(li);
+        return;
+      }
+
+      items.slice(0, 30).forEach((item) => {
+        const status = item.status || "unknown";
+        const jobId = item.id || item.job_id || "-";
+
+        const li = document.createElement("li");
+        li.className = "job-row";
+
+        const main = document.createElement("div");
+        main.className = "job-main";
+
+        const title = document.createElement("strong");
+        title.textContent = jobId;
+
+        const meta = document.createElement("div");
+        meta.className = "job-meta";
+        meta.textContent = `图片 ${item.image_count ?? "-"} | 场景 ${item.scene_name || "-"} | 更新 ${item.updated_at || item.created_at || "-"}`;
+
+        if (item.message || item.error) {
+          const message = document.createElement("div");
+          message.className = "job-meta";
+          message.textContent = item.message || item.error;
+          main.appendChild(title);
+          main.appendChild(meta);
+          main.appendChild(message);
+        } else {
+          main.appendChild(title);
+          main.appendChild(meta);
+        }
+
+        const badge = document.createElement("span");
+        badge.className = "job-status " + status;
+        badge.textContent = jobStatusLabel(status);
+
+        const cancelButton = document.createElement("button");
+        cancelButton.className = "job-cancel";
+        cancelButton.textContent = "取消";
+        cancelButton.disabled = !canCancelJob(status);
+        cancelButton.onclick = () => cancelJob(jobId);
+
+        li.appendChild(main);
+        li.appendChild(badge);
+        li.appendChild(cancelButton);
+        list.appendChild(li);
+      });
+    }
+
     function renderScenes(datasets, latestScene) {
       const list = document.getElementById("sceneList");
       list.innerHTML = "";
@@ -1304,12 +1399,13 @@ async def index() -> str:
 
     async function refresh() {
       try {
-        const [status, progress, logs, uploads, scenes] = await Promise.all([
+        const [status, progress, logs, uploads, scenes, jobs] = await Promise.all([
           apiGet("/api/status"),
           apiGet("/api/progress"),
           apiGet("/api/logs?lines=500"),
           apiGet("/api/uploads/summary"),
-          apiGet("/api/scenes/summary")
+          apiGet("/api/scenes/summary"),
+          apiGet("/api/jobs")
         ]);
 
         document.getElementById("statusLine").textContent =
@@ -1344,6 +1440,7 @@ async def index() -> str:
         document.getElementById("logBox").textContent = logs.lines.join("\\n");
 
         renderUploads(uploads.items || []);
+        renderJobs(jobs || {});
         renderScenes(scenes.datasets || [], scenes.latest_scene || "");
         renderPhases(progress.sections || []);
       } catch (error) {
@@ -1400,9 +1497,16 @@ async def index() -> str:
     }
 
     async function clearUploads() {
-      if (!confirm("确认删除上传目录中的所有照片？此操作不可恢复。")) return;
+      if (!confirm("确认删除旧上传照片和未运行队列任务？此操作不可恢复。")) return;
       const result = await apiPost("/api/uploads/clear");
-      alert(`已删除 ${result.deleted} 张上传照片`);
+      alert(`已删除 ${result.deleted_files ?? 0} 个上传文件，${result.deleted_jobs ?? 0} 个队列任务`);
+      await refresh();
+    }
+
+    async function cancelJob(jobId) {
+      if (!jobId || jobId === "-") return;
+      if (!confirm(`确认取消排队任务 ${jobId}？`)) return;
+      await apiPost(`/api/jobs/${encodeURIComponent(jobId)}/cancel`);
       await refresh();
     }
 
