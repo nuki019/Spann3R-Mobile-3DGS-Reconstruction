@@ -22,7 +22,7 @@ from pipeline.job_queue import (
     summarize_jobs,
 )
 from pipeline.job_policy import can_cancel_job_status, can_upload_by_phase
-from pipeline.task_state import PipelineStateStore, build_sections
+from pipeline.task_state import PipelineStateStore
 from services.pointcloud_index import (
     DEFAULT_POINTCLOUD_ROOTS,
     discover_pointclouds as discover_pointcloud_items,
@@ -42,6 +42,7 @@ from services.config_model import (
     read_config_file,
     write_config_file,
 )
+from services.dashboard_state_model import active_job_from_state, merge_state_progress, normalize_state_phase
 from services.progress_model import build_phase_status, extract_current_run_logs, parse_progress
 from services.upload_model import (
     build_upload_filename,
@@ -265,73 +266,6 @@ def get_config_bool(config_key: str, default: bool) -> bool:
 
 def read_pipeline_state() -> Dict[str, object]:
     return STATE_STORE.read()
-
-
-def normalize_state_phase(state: Dict[str, object], running: bool) -> str:
-    phase = str(state.get("phase") or "idle")
-    status = str(state.get("status") or "")
-    if status == "running" and not running and phase not in {"completed", "failed", "stopped", "idle"}:
-        return "stopped"
-    return phase
-
-
-def active_job_from_state(state: Dict[str, object], running: bool) -> Optional[Dict[str, object]]:
-    if not state:
-        return None
-    job_id = str(state.get("job_id") or "")
-    scene_name = str(state.get("scene_name") or "")
-    if not job_id and not scene_name:
-        return None
-    return {
-        "id": job_id or scene_name,
-        "scene_name": scene_name,
-        "phase": normalize_state_phase(state, running),
-        "status": state.get("status") or ("running" if running else "idle"),
-        "started_at": state.get("started_at") or "",
-        "updated_at": state.get("updated_at") or "",
-    }
-
-
-def merge_state_progress(
-    state: Dict[str, object],
-    log_progress: Dict[str, Optional[str]],
-    running: bool,
-) -> Dict[str, object]:
-    state_copy = dict(state)
-    phase = normalize_state_phase(state_copy, running)
-    if phase != state_copy.get("phase"):
-        state_copy["phase"] = phase
-        state_copy["status"] = "stopped"
-        state_copy["message"] = "流水线进程已退出，状态标记为已停止"
-
-    metrics = state_copy.get("metrics") if isinstance(state_copy.get("metrics"), dict) else {}
-    progress: Dict[str, object] = dict(metrics)
-    for key, value in log_progress.items():
-        if value not in (None, ""):
-            progress[key] = value
-
-    scene_name = str(state_copy.get("scene_name") or progress.get("scene_name") or read_latest_scene())
-    state_for_sections = dict(state_copy)
-    state_for_sections["metrics"] = progress
-
-    progress.update(
-        {
-            "job_id": state_copy.get("job_id") or scene_name,
-            "scene_name": scene_name,
-            "phase": phase,
-            "stage": phase,
-            "status": state_copy.get("status") or ("running" if running else "idle"),
-            "message": state_copy.get("message") or "",
-            "error": state_copy.get("error") or "",
-            "started_at": state_copy.get("started_at") or "",
-            "updated_at": state_copy.get("updated_at") or "",
-            "completed_at": state_copy.get("completed_at") or "",
-            "paths": state_copy.get("paths") or {},
-            "artifacts": state_copy.get("artifacts") or {},
-            "sections": build_sections(state_for_sections),
-        }
-    )
-    return progress
 
 
 def under_allowed_roots(path: Path) -> bool:
@@ -1283,7 +1217,7 @@ async def api_progress():
     log_progress = parse_progress(logs)
     state = read_pipeline_state()
     if state:
-        progress = merge_state_progress(state, log_progress, running)
+        progress = merge_state_progress(state, log_progress, running, latest_scene=read_latest_scene())
     else:
         progress = log_progress
         phase_info = build_phase_status(logs, running, progress)

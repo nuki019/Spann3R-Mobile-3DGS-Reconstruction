@@ -338,6 +338,7 @@ python tools/api_contract_check.py
 python tools/autodl_preflight_check.py --offline
 python tools/test_frontend_config.py
 python tools/test_config_model.py
+python tools/test_dashboard_state_model.py
 node tools/test_preview_state_model.js
 python tools/test_command_model.py
 python tools/test_upload_model.py
