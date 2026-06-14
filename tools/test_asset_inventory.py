@@ -12,6 +12,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from services.asset_inventory import (  # noqa: E402
+    build_scenes_summary_payload,
+    build_uploads_summary_payload,
     discover_archive_dirs,
     discover_photo_scenes,
     discover_scene_datasets,
@@ -118,10 +120,62 @@ def test_photo_scenes_and_datasets() -> None:
     print("[OK] asset inventory photo scenes and datasets")
 
 
+def test_summary_payload_builders() -> None:
+    uploads = build_uploads_summary_payload(
+        watch_dir=Path("/tmp/watch"),
+        queue_enabled=True,
+        queue_root=Path("/tmp/queue"),
+        queue_summary={"count": 2, "queued": 1},
+        archive_dir=Path("/tmp/archive"),
+        cleanup_mode="archive",
+        archive_keep="5",
+        uploaded_count=3,
+        items=[{"name": "frame.jpg", "mtime": "2026-06-14 12:00:00"}],
+        jobs=[{"id": "wx_01"}],
+        archives=[{"name": "archive_01"}],
+        queue_archives=[{"name": "queue_archive_01"}],
+    )
+    assert_equal(uploads["watch_dir"], str(Path("/tmp/watch")), "upload summary watch dir changed")
+    assert_equal(uploads["queue"], {"count": 2, "queued": 1}, "upload summary queue changed")
+    assert_equal(uploads["latest_mtime"], "2026-06-14 12:00:00", "upload latest mtime changed")
+    assert_equal(uploads["count"], 3, "upload count changed")
+    assert_equal(uploads["jobs"], [{"id": "wx_01"}], "upload jobs changed")
+
+    legacy_uploads = build_uploads_summary_payload(
+        watch_dir=Path("/tmp/watch"),
+        queue_enabled=False,
+        queue_root=Path("/tmp/queue"),
+        queue_summary={"count": 99, "queued": 99},
+        archive_dir=Path("/tmp/archive"),
+        cleanup_mode="delete",
+        archive_keep="1",
+        uploaded_count=0,
+        items=[],
+        jobs=[],
+        archives=[],
+        queue_archives=[],
+    )
+    assert_equal(legacy_uploads["queue"], {"count": 0, "queued": 0}, "legacy upload queue should be hidden")
+    assert_equal(legacy_uploads["latest_mtime"], None, "empty latest mtime changed")
+
+    scenes = build_scenes_summary_payload(
+        latest_scene="scene_a",
+        datasets=[{"scene": "scene_a"}, {"scene": "scene_b"}],
+        photo_scenes=[{"scene": "scene_a"}],
+        pointclouds=[{"name": "scene_a.ply"}],
+    )
+    assert_equal(scenes["latest_scene"], "scene_a", "scene latest marker changed")
+    assert_equal(scenes["dataset_count"], 2, "dataset count changed")
+    assert_equal(scenes["photo_scene_count"], 1, "photo scene count changed")
+    assert_equal(scenes["pointcloud_count"], 1, "pointcloud count changed")
+    print("[OK] asset inventory summary payloads")
+
+
 def main() -> None:
     test_uploaded_images()
     test_archive_dirs()
     test_photo_scenes_and_datasets()
+    test_summary_payload_builders()
     print("[OK] asset inventory checks passed")
 
 

@@ -44,6 +44,8 @@ from services.cleanup_model import clear_non_running_jobs, clear_uploaded_inputs
 from services.dashboard_state_model import active_job_from_state, merge_state_progress, normalize_state_phase
 from services.gaussian_export_model import apply_gaussian_export_config, latest_scene_dir
 from services.asset_inventory import (
+    build_scenes_summary_payload,
+    build_uploads_summary_payload,
     discover_archive_dirs as discover_archive_dirs_for_root,
     discover_photo_scenes as discover_photo_scenes_for_root,
     discover_scene_datasets as discover_scene_datasets_for_root,
@@ -1148,21 +1150,20 @@ async def api_uploads_summary():
     all_images = list_images(watch_dir)
     items = discover_uploaded_images(limit=200)
     jobs = list_jobs(queue_root, limit=200) if queue_enabled else []
-    return {
-        "watch_dir": str(watch_dir),
-        "queue_enabled": queue_enabled,
-        "queue_root": str(queue_root),
-        "queue": summarize_jobs(queue_root) if queue_enabled else {"count": 0, "queued": 0},
-        "archive_dir": str(archive_dir),
-        "cleanup_mode": values.get("RESTART_UPLOAD_CLEANUP", "archive"),
-        "archive_keep": values.get("RESTART_UPLOAD_ARCHIVE_KEEP", "5"),
-        "count": len(all_images),
-        "latest_mtime": items[0]["mtime"] if items else None,
-        "items": items,
-        "jobs": jobs,
-        "archives": discover_upload_archives(limit=20),
-        "queue_archives": discover_queue_archives(limit=20),
-    }
+    return build_uploads_summary_payload(
+        watch_dir=watch_dir,
+        queue_enabled=queue_enabled,
+        queue_root=queue_root,
+        queue_summary=summarize_jobs(queue_root) if queue_enabled else {"count": 0, "queued": 0},
+        archive_dir=archive_dir,
+        cleanup_mode=values.get("RESTART_UPLOAD_CLEANUP", "archive"),
+        archive_keep=values.get("RESTART_UPLOAD_ARCHIVE_KEEP", "5"),
+        uploaded_count=len(all_images),
+        items=items,
+        jobs=jobs,
+        archives=discover_upload_archives(limit=20),
+        queue_archives=discover_queue_archives(limit=20),
+    )
 
 
 @app.post("/api/uploads/clear")
@@ -1177,14 +1178,7 @@ async def api_scenes_summary():
     datasets = discover_scene_datasets()
     photo_scenes = discover_photo_scenes()
     pointclouds = discover_pointclouds()
-    return {
-        "latest_scene": read_latest_scene(),
-        "dataset_count": len(datasets),
-        "photo_scene_count": len(photo_scenes),
-        "pointcloud_count": len(pointclouds),
-        "datasets": datasets,
-        "photo_scenes": photo_scenes,
-    }
+    return build_scenes_summary_payload(read_latest_scene(), datasets, photo_scenes, pointclouds)
 
 
 @app.get("/api/jobs")

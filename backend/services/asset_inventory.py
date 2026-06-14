@@ -114,3 +114,50 @@ def read_latest_scene(scene_data_root: Path) -> str:
     if not marker.exists():
         return ""
     return marker.read_text(encoding="utf-8").strip()
+
+
+def build_uploads_summary_payload(
+    watch_dir: Path,
+    queue_enabled: bool,
+    queue_root: Path,
+    queue_summary: Dict[str, object],
+    archive_dir: Path,
+    cleanup_mode: str,
+    archive_keep: str,
+    uploaded_count: int,
+    items: List[Dict[str, str]],
+    jobs: List[Dict[str, object]],
+    archives: List[Dict[str, str]],
+    queue_archives: List[Dict[str, str]],
+) -> Dict[str, object]:
+    return {
+        "watch_dir": str(watch_dir),
+        "queue_enabled": queue_enabled,
+        "queue_root": str(queue_root),
+        "queue": queue_summary if queue_enabled else {"count": 0, "queued": 0},
+        "archive_dir": str(archive_dir),
+        "cleanup_mode": cleanup_mode,
+        "archive_keep": archive_keep,
+        "count": uploaded_count,
+        "latest_mtime": items[0]["mtime"] if items else None,
+        "items": items,
+        "jobs": jobs,
+        "archives": archives,
+        "queue_archives": queue_archives,
+    }
+
+
+def build_scenes_summary_payload(
+    latest_scene: str,
+    datasets: List[Dict[str, str]],
+    photo_scenes: List[Dict[str, str]],
+    pointclouds: List[Dict[str, str]],
+) -> Dict[str, object]:
+    return {
+        "latest_scene": latest_scene,
+        "dataset_count": len(datasets),
+        "photo_scene_count": len(photo_scenes),
+        "pointcloud_count": len(pointclouds),
+        "datasets": datasets,
+        "photo_scenes": photo_scenes,
+    }
