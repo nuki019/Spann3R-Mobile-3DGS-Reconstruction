@@ -134,6 +134,55 @@ def check_required_text() -> None:
     print("[OK] required delivery text")
 
 
+def check_backend_routes() -> None:
+    dashboard = (ROOT / "backend" / "services" / "backend_dashboard.py").read_text(
+        encoding="utf-8",
+        errors="ignore",
+    )
+    required_routes = [
+        '@app.get("/healthz")',
+        '@app.get("/upload-proxy/healthz")',
+        '@app.post("/upload-proxy/upload")',
+        '@app.get("/api/status")',
+        '@app.get("/api/progress")',
+        '@app.get("/api/jobs")',
+        '@app.post("/api/jobs/{job_id}/cancel")',
+        '@app.get("/api/pointclouds/summary")',
+        '@app.get("/download/processed/latest")',
+    ]
+    for route in required_routes:
+        if route not in dashboard:
+            fail(f"backend dashboard missing route: {route}")
+    print("[OK] backend route presence")
+
+
+def check_frontend_queue_entrypoints() -> None:
+    preview_js = (ROOT / "frontend" / "pages" / "preview" / "preview.js").read_text(
+        encoding="utf-8",
+        errors="ignore",
+    )
+    preview_wxml = (ROOT / "frontend" / "pages" / "preview" / "preview.wxml").read_text(
+        encoding="utf-8",
+        errors="ignore",
+    )
+    upload_utils = (ROOT / "frontend" / "utils" / "oss_upload_utils.js").read_text(
+        encoding="utf-8",
+        errors="ignore",
+    )
+    required_terms = [
+        (upload_utils, "jobsApiUrl"),
+        (preview_js, "buildJobsData"),
+        (preview_js, "cancelJob"),
+        (preview_js, "/cancel"),
+        (preview_wxml, "任务队列"),
+        (preview_wxml, "bindtap=\"cancelJob\""),
+    ]
+    for text, term in required_terms:
+        if term not in text:
+            fail(f"frontend queue entrypoint missing: {term}")
+    print("[OK] frontend queue entrypoints")
+
+
 def check_job_queue_smoke() -> None:
     sys.path.insert(0, str(ROOT / "backend"))
     from pipeline.job_queue import (  # pylint: disable=import-outside-toplevel
@@ -192,6 +241,8 @@ def main() -> None:
     check_js_syntax(JS_FILES)
     check_no_secrets(TEXT_FILES_TO_SCAN)
     check_required_text()
+    check_backend_routes()
+    check_frontend_queue_entrypoints()
     check_job_queue_smoke()
     print("[OK] delivery smoke checks passed")
 
