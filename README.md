@@ -15,18 +15,18 @@
 │  │  · 有效帧上传      │    │  · 本地帧预览 / 联调地址复制       │   │
 │  └──────────────────┘    └──────────────────────────────────┘   │
 └────────────────────────┬────────────────────────┬───────────────┘
-                   6006 (上传)              6008 (管理/状态)
+                   6006 (Viewer)            6008 (管理/上传/下载)
                          │                        │
 ┌────────────────────────▼────────────────────────▼───────────────┐
 │                       后端服务                                    │
 │  ┌───────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
 │  │ upload_server  │  │backend_dash- │  │  pointcloud_download │  │
-│  │   (6006)       │  │  board(6008) │  │    server (可选)      │  │
+│  │ (内部/阶段式)   │  │  board(6008) │  │    server (可选)      │  │
 │  └───────┬───────┘  └──────┬───────┘  └──────────────────────┘  │
 │          │                 │                                      │
 │  ┌───────▼─────────────────▼──────────────────────────────────┐  │
 │  │              pipeline 自动化编排                              │  │
-│  │  A: 上传采集 → B: Spann3R 重建 → C: 3DGS 训练 → D: 导出下载  │  │
+│  │  A: 上传代理 → B: Spann3R 重建 → C: 3DGS 训练 → D: 导出下载  │  │
 │  └────────────────────────────────────────────────────────────┘  │
 │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐             │
 │  │   Spann3R    │ │    DUSt3R    │ │  splatfacto  │             │
@@ -84,8 +84,8 @@ Spann3R-Mobile-3DGS-Reconstruction/
 ## 端到端工作流
 
 ```
-阶段 A: 上传采集 (6006)
-  前端拍照 → IMU 稳定性筛选 → Laplacian 清晰度筛选 → POST /upload
+阶段 A: 上传采集 (6008 /upload-proxy)
+  前端拍照 → IMU 稳定性筛选 → Laplacian 清晰度筛选 → POST /upload-proxy/upload
          ↓
 阶段 B: Spann3R 重建
   快照图片 → demo.py 增量推理 → 点云(raw + downsampled) → transforms.json
@@ -101,9 +101,8 @@ Spann3R-Mobile-3DGS-Reconstruction/
 
 | 端口 | 用途 | 阶段 |
 |------|------|------|
-| 6006 | 图片上传 `POST /upload` | 阶段 A |
-| 6006 | Nerfstudio Viewer | 阶段 C（与上传互斥） |
-| 6008 | 管理 UI、状态 API、点云下载 | 全阶段 |
+| 6006 | Nerfstudio Viewer | 阶段 C |
+| 6008 | 管理 UI、状态 API、上传代理、点云下载 | 全阶段 |
 
 ## 快速开始
 
@@ -122,6 +121,8 @@ conda create -n spann3r python=3.9 cmake=3.14.0
 conda activate spann3r
 conda install pytorch==2.3.0 torchvision==0.18.0 torchaudio==2.3.0 pytorch-cuda=11.8 -c pytorch -c nvidia
 pip install -r requirements.txt
+# 可选：开发/交付检查依赖
+pip install -r requirements-dev.txt
 pip install -U -f https://www.open3d.org/docs/latest/getting_started.html open3d
 
 # 2. 编译 CUDA 内核（RoPE 位置编码）
@@ -142,7 +143,7 @@ bash start_backend_4090.sh    # 上传 / 重建 / 训练 (6006)
 
 # 健康检查
 curl http://127.0.0.1:6008/healthz
-curl http://127.0.0.1:6006/healthz
+curl http://127.0.0.1:6008/upload-proxy/healthz
 ```
 
 ### 前端配置
@@ -151,9 +152,9 @@ curl http://127.0.0.1:6006/healthz
 2. 修改 `utils/oss_upload_utils.js` 中的后端地址：
 
 ```javascript
-// 上传 / Viewer（对应后端 6006）
-const UPLOAD_BASE_URL = "https://your-host:6006";
-// 管理 / 下载（对应后端 6008）
+// Viewer（对应后端 6006）
+const VIEWER_BASE_URL = "https://your-viewer-host";
+// 管理 / 上传代理 / 下载（对应后端 6008）
 const DASHBOARD_BASE_URL = "https://your-host:6008";
 ```
 
@@ -189,12 +190,12 @@ python demo.py --demo_path ./assets/examples/s00567 --kf_every 10 --vis --vis_ca
 - 计算超时 1.5s 自动放行，异常时兜底放行，watchdog 3s 防卡死
 
 **文件持久化：**
-- 每次拍照后立即调用 `wx.saveFile` 将临时路径转为持久文件
-- 新一轮采集自动清理上一次缓存
+- 默认使用微信临时文件路径完成清晰度筛选和上传，避免每次采集都写入相册
+- 临时路径不可用时才回退 `wx.saveFile`，新一轮采集会清理上一次缓存
 
 **上传门控（双条件）：**
 - `phase ∈ {idle, input, stopped, unknown}`
-- `6008 /healthz` 返回 `status: "ok"`
+- `6008 /upload-proxy/healthz` 返回 `status: "ok"`
 - 两个条件同时满足才允许上传
 
 ### 预览页（preview）
@@ -203,7 +204,7 @@ python demo.py --demo_path ./assets/examples/s00567 --kf_every 10 --vis --vis_ca
 
 | 频率 | 周期 | 接口 |
 |------|------|------|
-| 高频 | 2.5s | `/api/status`、`/api/progress`、`/healthz`、`/stats` |
+| 高频 | 2.5s | `/api/status`、`/api/progress`、`/healthz`、`/upload-proxy/healthz` |
 | 中频 | 5s | `/api/logs?lines=200` |
 | 低频 | 10s | `/api/uploads/summary`、`/api/scenes/summary` |
 
@@ -222,13 +223,13 @@ python demo.py --demo_path ./assets/examples/s00567 --kf_every 10 --vis --vis_ca
 
 ## 后端 API 速览
 
-### 上传服务（6006）
+### 上传代理（6008）
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `POST` | `/upload` | 上传图片（`multipart/form-data`，字段 `frame_file`） |
-| `GET` | `/healthz` | 健康检查 |
-| `GET` | `/stats` | 上传累计统计 |
+| `POST` | `/upload-proxy/upload` | 上传图片（`multipart/form-data`，字段 `frame_file`） |
+| `GET` | `/upload-proxy/healthz` | 上传代理健康检查 |
+| `GET` | `/upload-proxy/stats` | 上传累计统计 |
 
 ### 管理服务（6008）
 
@@ -246,6 +247,7 @@ python demo.py --demo_path ./assets/examples/s00567 --kf_every 10 --vis --vis_ca
 | `GET` | `/downloads` | 点云下载页 |
 | `GET` | `/files` | 点云文件索引 |
 | `GET` | `/download/latest?prefer=gaussian` | 下载最新点云 |
+| `GET` | `/download/processed/latest?prefer=gaussian` | 下载最新优化点云 |
 
 ### 阶段字段（`/api/progress` → `phase`）
 
@@ -259,7 +261,7 @@ idle → input → spann3r → gaussian → completed
 
 | Token | 环境变量 | 作用域 |
 |-------|----------|--------|
-| 上传 | `UPLOAD_AUTH_TOKEN` | `POST /upload`（Header `X-Auth-Token` 或表单 `token`） |
+| 上传 | `UPLOAD_AUTH_TOKEN` | `POST /upload-proxy/upload`（Header `X-Auth-Token` 或表单 `token`） |
 | 管理 | `DASHBOARD_AUTH_TOKEN` | 6008 所有 `POST` 接口（Header `X-Auth-Token`） |
 
 未启用时保持空字符串即可。
@@ -276,6 +278,9 @@ idle → input → spann3r → gaussian → completed
 | `SPANN3R_KF_EVERY` | 关键帧间隔 |
 | `SPANN3R_CONF_THRESH` | 置信度过滤阈值 |
 | `SPANN3R_VOXEL_SIZE` | 体素下采样尺寸 |
+| `NS_MAX_NUM_ITERATIONS` | Splatfacto 训练步数，交付默认 1000 |
+| `NS_STEPS_PER_SAVE` | Nerfstudio checkpoint 保存间隔 |
+| `NS_QUIT_ON_TRAIN_COMPLETION` | 训练完成后自动退出 Viewer 并继续导出 |
 | `NS_EXPORT_AFTER_TRAIN` | 训练后是否自动导出 |
 | `GAUSSIAN_CROP_PADDING_RATIO` | Gaussian 裁切填充比例 |
 
@@ -301,12 +306,33 @@ scene_name/
 - 自动流水线 — `auto_pipeline_cn.md`
 - 数据预处理 — `data_preprocess.md`
 - 部署原理 — `backend_4090_principles_cn.md`
+- AutoDL 常用命令 — `autodl_ops_commands_cn.md`
 
 **前端文档（`frontend/docs/`）：**
 - 前端接入文档 — `frontend_guide_cn.md`
 
 **根目录：**
 - 后端管线部署指南 — `backend/BACKEND_PIPELINE_GUIDE_CN.md` / `_EN.md`
+- 后续重构路线图 — `docs/refactor_roadmap_cn.md`
+
+## 交付检查
+
+提交或演示前建议运行：
+
+```bash
+python tools/smoke_check_delivery.py
+git diff --check
+```
+
+检查内容包括：
+
+- 后端核心 Python 文件语法
+- 前端小程序 JS 文件语法
+- README、运维文档和示例配置是否含明显敏感信息
+- `.sh` 脚本 LF 换行配置
+- README 是否包含当前 6008 上传代理、1000 步训练和点云下载说明
+
+注意：模型权重、点云、训练输出、截图和报告渲染产物不应提交到 GitHub。
 
 ## 致谢与引用声明
 

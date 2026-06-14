@@ -2,6 +2,10 @@
 .DS_Store
 .vscode/
 
+# Local WeChat Developer Tools project file generated at repository root.
+/project.config.json
+/project.private.config.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -173,6 +177,22 @@ output/
 outputs/
 test_photo_sets/
 runtime_data/
+input_images/
+input_images_archive/
+gs_train/
+*.ply
+*.splat
+*.ckpt
+*.pth
+*.pt
+*.zip
+*.tar
+*.tar.gz
+*.7z
+docs/final_deliverables/
+docs/screenshots/
+docs/report_render/
+outputs/
 
 # Model weights (too large for git)
 checkpoints/
@@ -180,6 +200,7 @@ checkpoints/
 # Compiled CUDA extensions
 submodules/
 __pycache__/
+tools/__pycache__/
 
 # Absolute symlinks (convenience, not portable)
 models

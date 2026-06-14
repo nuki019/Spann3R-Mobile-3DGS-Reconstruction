@@ -1,0 +1,7 @@
+-r requirements.txt
+
+# Development and delivery checks only.
+# GPU/CUDA-heavy packages such as Nerfstudio, Open3D and PyTorch CUDA wheels
+# are installed separately in the AutoDL/Conda environment.
+pytest==8.3.4
+ruff==0.8.4

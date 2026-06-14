@@ -8,12 +8,13 @@
 
 - 管理台：`http://<HOST>:6008/`
 - 下载页：`http://<HOST>:6008/downloads`
-- 上传/Viewer 共用端口：`http://<HOST>:6006/`
+- Viewer：`http://<HOST>:6006/`
+- 上传代理：`http://<HOST>:6008/upload-proxy/upload`
 
-注意：`6006` 在不同阶段用途不同。
+注意：
 
-- 上传阶段：`6006` 用于接收图片
-- 训练阶段：`6006` 用于 Viewer 可视化
+- `6008` 是日常入口，负责管理台、状态接口、上传代理和下载页。
+- `6006` 主要用于 Nerfstudio Viewer，可视化通常在 Gaussian 阶段可用。
 
 ## 2. 首次启动
 
@@ -30,10 +31,13 @@ bash start_backend_4090.sh
 
 ```bash
 curl http://127.0.0.1:6008/healthz
+curl http://127.0.0.1:6008/upload-proxy/healthz
 curl http://127.0.0.1:6008/api/status
 ```
 
 ## 3. 重启后端（常用）
+
+更完整的停止训练、重启、排障命令见 `backend/docs/autodl_ops_commands_cn.md`。
 
 ```bash
 cd /root/autodl-tmp/Spann3R
@@ -54,6 +58,13 @@ bash restart_backend_stack.sh
 
 ```bash
 curl -X POST "http://<HOST>:6006/upload" \
+  -F "frame_file=@/path/to/frame.jpg"
+```
+
+若使用当前 6008 上传代理，推荐：
+
+```bash
+curl -X POST "http://<HOST>:6008/upload-proxy/upload" \
   -F "frame_file=@/path/to/frame.jpg"
 ```
 

@@ -1,0 +1,17 @@
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+extend-exclude = [
+  "backend/croco",
+  "backend/dust3r",
+  "backend/spann3r",
+  "outputs",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tools"]
+python_files = ["smoke_check_*.py"]
