@@ -185,6 +185,16 @@ def summarize_pointclouds(items: List[Dict[str, str]]) -> Dict[str, object]:
     }
 
 
+def build_pointclouds_summary_payload(
+    items: List[Dict[str, str]],
+    limit: int = 300,
+) -> Dict[str, object]:
+    return {
+        "summary": summarize_pointclouds(items),
+        "items": items[:limit],
+    }
+
+
 def is_processed_pointcloud(item: Dict[str, str]) -> bool:
     name = (item.get("name") or "").lower()
     return "clipped" in name or "downsampled" in name or name.endswith("_init.ply")
@@ -197,6 +207,67 @@ def filter_pointclouds_by_processed(
     if processed is None:
         return items
     return [item for item in items if is_processed_pointcloud(item) == processed]
+
+
+def normalize_prefer(value: str, default: str = "gaussian") -> str:
+    return (value or default).strip().lower() or default
+
+
+def select_latest_pointcloud(
+    items: List[Dict[str, str]],
+    prefer: str = "gaussian",
+    processed: Optional[bool] = None,
+    strict: Optional[bool] = None,
+) -> Optional[Dict[str, str]]:
+    candidates = filter_pointclouds_by_processed(items, processed)
+    prefer_key = normalize_prefer(prefer)
+    strict_value = prefer_key != "any" if strict is None else strict
+    return pick_preferred_pointcloud(candidates, prefer=prefer_key, strict=strict_value)
+
+
+def select_scene_pointcloud(
+    items: List[Dict[str, str]],
+    scene_name: str,
+    prefer: str = "gaussian",
+    processed: Optional[bool] = None,
+    strict: Optional[bool] = None,
+) -> Optional[Dict[str, str]]:
+    scene_key = scene_name.strip()
+    candidates = [
+        item
+        for item in filter_pointclouds_by_processed(items, processed)
+        if item.get("scene") == scene_key
+    ]
+    prefer_key = normalize_prefer(prefer)
+    strict_value = prefer_key != "any" if strict is None else strict
+    return pick_preferred_pointcloud(candidates, prefer=prefer_key, strict=strict_value)
+
+
+def select_zip_pointclouds(
+    items: List[Dict[str, str]],
+    ids: str = "",
+    variant: str = "gaussian",
+    processed: Optional[bool] = None,
+    latest_scene: str = "",
+) -> List[Dict[str, str]]:
+    if ids.strip():
+        wanted = {item.strip() for item in ids.split(",") if item.strip()}
+        return [item for item in items if item.get("id") in wanted]
+
+    variant_key = normalize_prefer(variant, default="gaussian")
+    selected = [
+        item
+        for item in items
+        if (variant_key == "any" or item.get("variant") == variant_key)
+        and (not latest_scene or item.get("scene") == latest_scene)
+    ]
+    return filter_pointclouds_by_processed(selected, processed)
+
+
+def build_zip_archive_name(latest_scene: str, variant: str) -> str:
+    archive_scene = latest_scene or "pointclouds"
+    archive_variant = normalize_prefer(variant, default="any")
+    return f"{archive_scene}_{archive_variant}.zip"
 
 
 def write_pointcloud_zip(

@@ -11,7 +11,7 @@ from services.pointcloud_index import (
     index_by_id as index_pointclouds_by_id,
     infer_pointcloud_variant as infer_pointcloud_variant_for_path,
     parse_pointcloud_roots,
-    pick_preferred_pointcloud as pick_preferred_pointcloud_item,
+    select_latest_pointcloud,
     under_allowed_roots as is_under_allowed_roots,
 )
 
@@ -31,17 +31,6 @@ def infer_pointcloud_variant(file_path: Path) -> str:
 
 def discover_pointclouds() -> List[Dict[str, str]]:
     return discover_pointcloud_items(ROOTS)
-
-
-def pick_preferred_pointcloud(
-    items: List[Dict[str, str]],
-    prefer: str = "gaussian",
-    strict: bool = False,
-) -> Dict[str, str]:
-    chosen = pick_preferred_pointcloud_item(items, prefer=prefer, strict=strict)
-    if not chosen:
-        raise ValueError("empty pointcloud list")
-    return chosen
 
 
 def index_by_id() -> Dict[str, Path]:
@@ -105,16 +94,14 @@ async def download_latest(prefer: str = "gaussian"):
     if not items:
         raise HTTPException(status_code=404, detail="未找到可下载点云")
     prefer = (prefer or "gaussian").strip().lower()
-    strict = prefer != "any"
-    try:
-        chosen = pick_preferred_pointcloud(items, prefer=prefer, strict=strict)
-    except ValueError:
+    chosen = select_latest_pointcloud(items, prefer=prefer)
+    if not chosen:
         if prefer == "gaussian":
             raise HTTPException(
                 status_code=404,
                 detail="未找到 Gaussian 训练点云（当前可能仍在训练中或尚未导出）",
-            ) from None
-        raise HTTPException(status_code=404, detail=f"未找到类型为 {prefer} 的点云") from None
+            )
+        raise HTTPException(status_code=404, detail=f"未找到类型为 {prefer} 的点云")
     path = Path(chosen["path"])
     return FileResponse(path, filename=path.name, media_type="application/octet-stream")
 

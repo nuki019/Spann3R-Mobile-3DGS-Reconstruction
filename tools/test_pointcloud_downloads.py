@@ -13,14 +13,20 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from services.pointcloud_index import (  # pylint: disable=wrong-import-position
+    build_pointclouds_summary_payload,
+    build_zip_archive_name,
     discover_pointclouds,
     filter_pointclouds_by_processed,
     find_scene_gaussian_files,
     index_by_id,
     infer_pointcloud_variant,
     is_processed_pointcloud,
+    normalize_prefer,
     parse_pointcloud_roots,
     pick_preferred_pointcloud,
+    select_latest_pointcloud,
+    select_scene_pointcloud,
+    select_zip_pointclouds,
     summarize_pointclouds,
     under_allowed_roots,
     write_pointcloud_zip,
@@ -143,6 +149,45 @@ def check_processed_summary_and_index(items: list[dict[str, str]]) -> None:
     mapping = index_by_id(items)
     expect(set(mapping) == {item["id"] for item in items}, "id index mismatch")
 
+    payload = build_pointclouds_summary_payload(items, limit=2)
+    expect(payload["summary"] == summary, "pointcloud summary payload changed")
+    expect(len(payload["items"]) == 2, "pointcloud summary limit changed")
+
+
+def check_download_selection_helpers(items: list[dict[str, str]]) -> None:
+    expect(normalize_prefer("") == "gaussian", "empty prefer normalization changed")
+    expect(normalize_prefer(" Any ") == "any", "prefer normalization should trim and lowercase")
+
+    latest_gaussian = select_latest_pointcloud(items, prefer="gaussian")
+    expect(latest_gaussian is not None, "latest gaussian selection failed")
+    expect(latest_gaussian["name"] == "scene_new_gaussian_clipped.ply", "latest gaussian changed")
+
+    old_scene = [item for item in items if item["scene"] == "scene_old"]
+    expect(select_latest_pointcloud(old_scene, prefer="gaussian") is None, "strict latest should not fallback")
+    fallback = select_latest_pointcloud(old_scene, prefer="gaussian", strict=False)
+    expect(fallback is not None and fallback["variant"] == "train", "non-strict latest fallback changed")
+
+    scene_downsampled = select_scene_pointcloud(items, "scene_new", prefer="downsampled")
+    expect(scene_downsampled is not None and scene_downsampled["variant"] == "downsampled", "scene selection failed")
+    expect(select_scene_pointcloud(items, "missing", prefer="any") is None, "missing scene should return none")
+
+    zipped_latest = select_zip_pointclouds(items, variant="gaussian", latest_scene="scene_new")
+    expect({item["name"] for item in zipped_latest} == {"point_cloud.ply", "scene_new_gaussian_clipped.ply"}, "zip latest gaussian selection changed")
+
+    zipped_processed = select_zip_pointclouds(items, variant="any", processed=True, latest_scene="scene_new")
+    expect(
+        {item["name"] for item in zipped_processed}
+        == {"scene_new_downsampled.ply", "scene_new_gaussian_clipped.ply"},
+        "zip processed latest selection changed",
+    )
+
+    wanted_ids = ",".join([items[0]["id"], items[-1]["id"], "missing"])
+    zipped_ids = select_zip_pointclouds(items, ids=wanted_ids, variant="raw", processed=True, latest_scene="scene_new")
+    expect({item["id"] for item in zipped_ids} == {items[0]["id"], items[-1]["id"]}, "zip ids selection changed")
+    expect(build_zip_archive_name("scene_new", " Gaussian ") == "scene_new_gaussian.zip", "zip archive name changed")
+    expect(build_zip_archive_name("", "") == "pointclouds_any.zip", "default zip archive name changed")
+    print("[OK] pointcloud download selection helpers")
+
 
 def check_scene_gaussian_and_zip(
     roots: list[Path],
@@ -193,6 +238,7 @@ def main() -> None:
         expect(parsed_roots == [root.resolve() for root in roots], "root parsing failed")
         items = check_discovery_and_selection(roots, files)
         check_processed_summary_and_index(items)
+        check_download_selection_helpers(items)
         check_scene_gaussian_and_zip(roots, items, files)
     print("[OK] pointcloud download model checks passed")
 

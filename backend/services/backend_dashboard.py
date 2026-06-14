@@ -23,6 +23,8 @@ from pipeline.job_policy import can_cancel_job_status, can_upload_by_phase
 from pipeline.task_state import PipelineStateStore
 from services.pointcloud_index import (
     DEFAULT_POINTCLOUD_ROOTS,
+    build_pointclouds_summary_payload,
+    build_zip_archive_name,
     discover_pointclouds as discover_pointcloud_items,
     filter_pointclouds_by_processed,
     find_scene_gaussian_files as find_scene_gaussian_files_for_items,
@@ -30,7 +32,9 @@ from services.pointcloud_index import (
     infer_pointcloud_variant as infer_pointcloud_variant_for_path,
     parse_pointcloud_roots,
     pick_preferred_pointcloud as pick_preferred_pointcloud_item,
-    summarize_pointclouds,
+    select_latest_pointcloud,
+    select_scene_pointcloud,
+    select_zip_pointclouds,
     under_allowed_roots as is_under_allowed_roots,
     write_pointcloud_zip,
 )
@@ -1214,10 +1218,7 @@ async def api_pointclouds_clear(_: None = Depends(require_dashboard_token)):
 @app.get("/api/pointclouds/summary")
 async def api_pointclouds_summary():
     items = discover_pointclouds()
-    return {
-        "summary": summarize_pointclouds(items),
-        "items": items[:300],
-    }
+    return build_pointclouds_summary_payload(items, limit=300)
 
 
 @app.post("/api/pipeline/start")
@@ -1349,8 +1350,7 @@ async def download_latest(prefer: str = "gaussian", processed: Optional[bool] = 
     if not items:
         raise HTTPException(status_code=404, detail="未找到可下载点云")
     prefer = (prefer or "gaussian").strip().lower()
-    strict = prefer != "any"
-    chosen = pick_preferred_pointcloud(items, prefer=prefer, strict=strict)
+    chosen = select_latest_pointcloud(items, prefer=prefer)
     if not chosen:
         if prefer == "gaussian":
             raise HTTPException(
@@ -1367,7 +1367,7 @@ async def download_processed_latest(prefer: str = "gaussian"):
     items = filter_pointclouds_by_processed(discover_pointclouds(), True)
     if not items:
         raise HTTPException(status_code=404, detail="未找到优化后的可下载点云")
-    chosen = pick_preferred_pointcloud(items, prefer=prefer, strict=False)
+    chosen = select_latest_pointcloud(items, prefer=prefer, strict=False)
     if not chosen:
         raise HTTPException(status_code=404, detail=f"未找到类型为 {prefer} 的优化点云")
     path = Path(chosen["path"])
@@ -1390,7 +1390,7 @@ async def download_scene_pointcloud(
     if not items:
         raise HTTPException(status_code=404, detail=f"场景 {scene_name} 未找到可下载点云")
     prefer = (prefer or "gaussian").strip().lower()
-    chosen = pick_preferred_pointcloud(items, prefer=prefer, strict=(prefer != "any"))
+    chosen = select_scene_pointcloud(items, scene_name, prefer=prefer)
     if not chosen:
         raise HTTPException(status_code=404, detail=f"场景 {scene_name} 未找到类型为 {prefer} 的点云")
     path = Path(chosen["path"])
@@ -1400,24 +1400,15 @@ async def download_scene_pointcloud(
 @app.get("/download/zip")
 async def download_zip(ids: str = "", variant: str = "gaussian", processed: Optional[bool] = None):
     all_items = discover_pointclouds()
-    selected: List[Dict[str, str]] = []
-
-    if ids.strip():
-        wanted = {item.strip() for item in ids.split(",") if item.strip()}
-        selected = [item for item in all_items if item.get("id") in wanted]
-    else:
-        variant_key = (variant or "gaussian").strip().lower()
-        latest_scene = read_latest_scene()
-        selected = [
-            item for item in all_items
-            if (variant_key == "any" or item.get("variant") == variant_key)
-            and (not latest_scene or item.get("scene") == latest_scene)
-        ]
-        selected = filter_pointclouds_by_processed(selected, processed)
-
-    archive_scene = read_latest_scene() or "pointclouds"
-    archive_variant = (variant or "any").strip().lower() or "any"
-    return make_zip_response(selected, f"{archive_scene}_{archive_variant}.zip")
+    latest_scene = read_latest_scene()
+    selected = select_zip_pointclouds(
+        all_items,
+        ids=ids,
+        variant=variant,
+        processed=processed,
+        latest_scene=latest_scene,
+    )
+    return make_zip_response(selected, build_zip_archive_name(latest_scene, variant))
 
 
 @app.get("/download/{file_id}")
