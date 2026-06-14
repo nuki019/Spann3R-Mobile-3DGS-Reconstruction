@@ -28,6 +28,7 @@ const BACKEND_LINKS = {
   dashboardHealthUrl: `${DASHBOARD_BASE_URL}/healthz`,
   statusApiUrl: `${DASHBOARD_BASE_URL}/api/status`,
   progressApiUrl: `${DASHBOARD_BASE_URL}/api/progress`,
+  jobsApiUrl: `${DASHBOARD_BASE_URL}/api/jobs`,
   logsApiUrl: `${DASHBOARD_BASE_URL}/api/logs?lines=200`,
   configApiUrl: `${DASHBOARD_BASE_URL}/api/config`,
   configMetaApiUrl: `${DASHBOARD_BASE_URL}/api/config_meta`,

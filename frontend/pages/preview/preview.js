@@ -116,6 +116,7 @@ Page({
     dashboardHealthUrl: BACKEND_LINKS.dashboardHealthUrl,
     statusApiUrl: BACKEND_LINKS.statusApiUrl,
     progressApiUrl: BACKEND_LINKS.progressApiUrl,
+    jobsApiUrl: BACKEND_LINKS.jobsApiUrl,
     logsApiUrl: BACKEND_LINKS.logsApiUrl,
     uploadsSummaryApiUrl: BACKEND_LINKS.uploadsSummaryApiUrl,
     scenesSummaryApiUrl: BACKEND_LINKS.scenesSummaryApiUrl,
@@ -157,6 +158,9 @@ Page({
     sceneNameText: "-",
     uploadsSummaryText: "-",
     scenesSummaryText: "-",
+    jobsSummaryText: "-",
+    jobList: [],
+    jobsError: "",
     pointcloudSummaryText: "-",
     pointcloudList: [],
     pointcloudError: "",
@@ -384,6 +388,73 @@ Page({
     const latestText = latest && latest.name ? "最新:" + latest.name : "最新:-";
     return {
       text: countText + " | " + sizeText + " | 场景:" + sceneCount + " | " + clipText(latestText, 80),
+      items: items.slice(0, 8)
+    };
+  },
+
+  jobStatusText(status) {
+    const map = {
+      queued: "排队中",
+      uploading: "上传中",
+      ready: "待训练",
+      running: "训练中",
+      completed: "已完成",
+      failed: "失败",
+      stopped: "已取消"
+    };
+    return map[status] || status || "-";
+  },
+
+  jobStatusClass(status) {
+    if (status === "running") {
+      return "running";
+    }
+    if (status === "completed") {
+      return "done";
+    }
+    if (status === "failed" || status === "stopped") {
+      return "warn";
+    }
+    return "pending";
+  },
+
+  normalizeJobItem(item, index) {
+    const obj = toObject(item);
+    const status = pickString(obj, ["status"]) || "unknown";
+    const jobId = pickString(obj, ["id", "job_id"]) || ("job_" + index);
+    const imageCount = pickNumber(obj, ["image_count", "uploaded_images"]);
+    const sceneName = pickString(obj, ["scene_name"]) || "-";
+    const updatedAt = pickString(obj, ["updated_at", "created_at", "completed_at"]) || "-";
+    const canCancel = status === "queued" || status === "uploading" || status === "ready";
+    return {
+      id: jobId,
+      status: status,
+      statusText: this.jobStatusText(status),
+      statusClass: this.jobStatusClass(status),
+      sceneText: sceneName,
+      imageText: imageCount === null ? "-" : String(imageCount),
+      updatedAt: updatedAt,
+      message: clipText(pickString(obj, ["message", "error"]) || "", 80),
+      canCancel: canCancel
+    };
+  },
+
+  buildJobsData(data) {
+    const obj = toObject(data);
+    const summary = toObject(obj.summary);
+    const items = Array.isArray(obj.items) ? obj.items.map((item, index) => this.normalizeJobItem(item, index)) : [];
+    const totalCount = pickNumber(summary, ["count"]);
+    const queuedCount = pickNumber(summary, ["queued"]);
+    const runningCount = pickNumber(summary, ["running"]);
+    const completedCount = pickNumber(summary, ["completed"]);
+    const failedCount = pickNumber(summary, ["failed"]);
+    const countText = totalCount === null ? "任务:-" : "任务:" + totalCount;
+    const queuedText = queuedCount === null ? "排队:-" : "排队:" + queuedCount;
+    const runningText = runningCount === null ? "运行:-" : "运行:" + runningCount;
+    const completedText = completedCount === null ? "完成:-" : "完成:" + completedCount;
+    const failedText = failedCount === null ? "失败:-" : "失败:" + failedCount;
+    return {
+      text: countText + " | " + queuedText + " | " + runningText + " | " + completedText + " | " + failedText,
       items: items.slice(0, 8)
     };
   },
@@ -724,11 +795,13 @@ Page({
     return Promise.allSettled([
       this.requestGet(this.data.uploadsSummaryApiUrl),
       this.requestGet(this.data.scenesSummaryApiUrl),
-      this.requestGet(this.data.pointcloudsSummaryApiUrl)
+      this.requestGet(this.data.pointcloudsSummaryApiUrl),
+      this.requestGet(this.data.jobsApiUrl)
     ]).then((resultList) => {
       const uploadsSummary = resultList[0].status === "fulfilled" ? this.buildUploadsSummaryText(resultList[0].value) : "拉取失败";
       const scenesSummary = resultList[1].status === "fulfilled" ? this.buildScenesSummaryText(resultList[1].value) : "拉取失败";
       const pointcloudData = resultList[2].status === "fulfilled" ? this.buildPointcloudSummary(resultList[2].value) : { text: "拉取失败", items: [] };
+      const jobsData = resultList[3].status === "fulfilled" ? this.buildJobsData(resultList[3].value) : { text: "拉取失败", items: [] };
 
       this.slowPollFailed = resultList.some((item) => item.status === "rejected");
       this.syncBackendError();
@@ -736,6 +809,9 @@ Page({
       this.setData({
         uploadsSummaryText: uploadsSummary,
         scenesSummaryText: scenesSummary,
+        jobsSummaryText: jobsData.text,
+        jobList: jobsData.items,
+        jobsError: resultList[3].status === "rejected" ? "任务队列拉取失败，请检查 /api/jobs" : "",
         pointcloudSummaryText: pointcloudData.text,
         pointcloudList: pointcloudData.items,
         pointcloudError: resultList[2].status === "rejected" ? "点云清单拉取失败，请检查 /api/pointclouds/summary" : "",
@@ -798,6 +874,60 @@ Page({
 
   exportLatestGaussian() {
     this.runPipelineAction(this.data.gaussianExportLatestApiUrl, "导出Gaussian");
+  },
+
+  cancelJob(e) {
+    if (this.data.isActionRunning) {
+      return;
+    }
+    const dataset = e && e.currentTarget && e.currentTarget.dataset ? e.currentTarget.dataset : {};
+    const jobId = dataset.id || "";
+    if (!jobId) {
+      wx.showToast({ title: "任务ID为空", icon: "none" });
+      return;
+    }
+    wx.showModal({
+      title: "取消排队任务",
+      content: "确认取消任务 " + jobId + "？",
+      success: (res) => {
+        if (!res.confirm) {
+          return;
+        }
+        const token = (this.data.dashboardToken || "").trim();
+        const url = this.data.jobsApiUrl.replace(/\/$/, "") + "/" + encodeURIComponent(jobId) + "/cancel";
+        this.setData({
+          isActionRunning: true,
+          actionMessage: "取消任务中..."
+        });
+        this.requestPost(url, {}, token).then((resData) => {
+          const payload = toObject(resData);
+          if (payload && payload.ok === false) {
+            throw new Error(payload.msg || payload.error || "接口返回失败");
+          }
+          this.setData({
+            actionMessage: "取消任务成功：" + jobId
+          });
+          wx.showToast({
+            title: "已取消",
+            icon: "success"
+          });
+          this.refreshNow();
+        }).catch((err) => {
+          const errMsg = err && err.message ? err.message : "未知错误";
+          this.setData({
+            actionMessage: "取消任务失败：" + errMsg
+          });
+          wx.showToast({
+            title: "取消失败",
+            icon: "none"
+          });
+        }).finally(() => {
+          this.setData({
+            isActionRunning: false
+          });
+        });
+      }
+    });
   },
 
   refreshNow() {

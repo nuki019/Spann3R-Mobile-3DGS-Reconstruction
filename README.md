@@ -220,6 +220,11 @@ python demo.py --demo_path ./assets/examples/s00567 --kf_every 10 --vis --vis_ca
 - 开始流程 → `POST /api/pipeline/start`
 - 停止流程 → `POST /api/pipeline/stop`
 - 导出 Gaussian → `POST /api/gaussian/export_latest`
+- 取消排队任务 → `POST /api/jobs/{job_id}/cancel`
+
+**任务队列：**
+- 状态页轮询 `/api/jobs` 展示排队、运行、完成、失败任务。
+- 未开始任务可在状态页直接取消；运行中任务仍使用“停止训练”。
 
 ## 后端 API 速览
 

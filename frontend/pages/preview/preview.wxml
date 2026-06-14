@@ -80,6 +80,38 @@
     <view class="action-tip" wx:if="{{actionMessage}}">{{actionMessage}}</view>
   </view>
 
+  <view class="panel jobs-panel">
+    <view class="panel-title">任务队列</view>
+    <view class="jobs-summary">{{jobsSummaryText}}</view>
+    <view class="error-tip" wx:if="{{jobsError}}">{{jobsError}}</view>
+
+    <view wx:if="{{jobList.length > 0}}" class="job-list">
+      <block wx:for="{{jobList}}" wx:key="id">
+        <view class="job-item {{item.statusClass}}">
+          <view class="job-main">
+            <view class="job-head">
+              <text class="job-id">{{item.id}}</text>
+              <text class="job-badge {{item.statusClass}}">{{item.statusText}}</text>
+            </view>
+            <view class="job-meta">图片 {{item.imageText}} 张 · 场景 {{item.sceneText}}</view>
+            <view class="job-meta">更新时间：{{item.updatedAt}}</view>
+            <view class="job-message" wx:if="{{item.message}}">{{item.message}}</view>
+          </view>
+          <button
+            class="job-cancel"
+            data-id="{{item.id}}"
+            bindtap="cancelJob"
+            disabled="{{!item.canCancel || isActionRunning}}"
+          >
+            取消
+          </button>
+        </view>
+      </block>
+    </view>
+
+    <view wx:else class="empty-tip compact">暂无队列任务</view>
+  </view>
+
   <view class="panel logs-panel">
     <view class="panel-title">后端最新日志</view>
     <view wx:if="{{latestLogLines.length > 0}}" class="log-list">
