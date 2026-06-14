@@ -19,7 +19,6 @@ from pipeline.job_queue import (
     record_uploaded_frame,
     summarize_jobs,
 )
-from pipeline.job_policy import can_upload_by_phase
 from pipeline.task_state import PipelineStateStore
 from services.pointcloud_index import (
     DEFAULT_POINTCLOUD_ROOTS,
@@ -71,6 +70,7 @@ from services.progress_model import (
     parse_progress,
 )
 from services.upload_model import (
+    allow_upload_for_mode,
     build_upload_stats_payload,
     build_upload_manifest_row,
     build_upload_filename,
@@ -436,7 +436,7 @@ async def save_uploaded_frame(
 ) -> Dict[str, object]:
     phase = current_phase_for_upload_gate()
     queue_enabled = get_config_bool("PIPELINE_QUEUE_ENABLED", True)
-    if not queue_enabled and not can_upload_by_phase(phase):
+    if not allow_upload_for_mode(phase, queue_enabled):
         raise HTTPException(status_code=409, detail=f"当前阶段不可上传：{phase}")
 
     validate_upload_token(form_token, header_token)

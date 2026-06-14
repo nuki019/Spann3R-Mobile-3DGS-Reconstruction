@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 
 from pipeline.job_queue import job_images_dir  # noqa: E402
 from services.upload_model import (  # noqa: E402
+    allow_upload_for_mode,
     build_upload_filename,
     build_upload_manifest_row,
     build_upload_response,
@@ -94,6 +95,14 @@ def test_upload_destination() -> None:
         assert_equal(job_id, "wx_session_01", "legacy session id should still be sanitized")
         assert_equal(save_dir, watch_dir, "legacy destination should use watch dir")
     print("[OK] upload destination model")
+
+
+def test_upload_gate() -> None:
+    assert_true(allow_upload_for_mode("gaussian", True), "queue mode should accept uploads during gaussian")
+    assert_true(allow_upload_for_mode("failed", True), "queue mode should accept uploads after failed runs")
+    assert_true(not allow_upload_for_mode("gaussian", False), "legacy gaussian upload should be blocked")
+    assert_true(allow_upload_for_mode("idle", False), "legacy idle upload should be allowed")
+    print("[OK] upload gate model")
 
 
 def test_upload_manifest_and_response() -> None:
@@ -189,6 +198,7 @@ def main() -> None:
     test_upload_suffix()
     test_frame_index_and_filename()
     test_upload_destination()
+    test_upload_gate()
     test_upload_manifest_and_response()
     test_upload_stats_payload()
     print("[OK] upload model checks passed")

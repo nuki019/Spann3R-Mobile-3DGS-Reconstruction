@@ -54,6 +54,10 @@ def resolve_upload_destination(
     return safe_session, save_dir
 
 
+def allow_upload_for_mode(phase: str, queue_enabled: bool) -> bool:
+    return bool(queue_enabled) or can_upload_by_phase(phase)
+
+
 def build_upload_manifest_row(
     filename: str,
     size_bytes: int,
@@ -110,7 +114,7 @@ def build_upload_stats_payload(
     return {
         "status": "ok",
         "phase": phase,
-        "allow_upload": queue_enabled or can_upload_by_phase(phase),
+        "allow_upload": allow_upload_for_mode(phase, queue_enabled),
         "queue_enabled": queue_enabled,
         "queue": queue_summary if queue_enabled else {"count": 0, "queued": 0},
         "uploaded_files": uploaded_files,
