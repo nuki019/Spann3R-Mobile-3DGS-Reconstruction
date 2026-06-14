@@ -169,6 +169,65 @@ function testSummaryBuilders() {
   console.log("[OK] preview state summary builders");
 }
 
+function testStatusAndProgressParsing() {
+  assert.deepStrictEqual(
+    model.parseStatus({
+      running: true,
+      pid: 1234,
+      queue_length: "2",
+      active_job: { id: "job_a", started_at: "2026-06-14T10:00:00Z" },
+    }),
+    {
+      runningText: "运行中",
+      pidText: "1234",
+      queueText: "等待队列:2",
+      jobText: "job_a | 2026-06-14T10:00:00Z",
+    },
+  );
+  assert.deepStrictEqual(
+    model.parseStatus({ pid: "", queue: {} }),
+    {
+      runningText: "未运行",
+      pidText: "-",
+      queueText: "等待队列:-",
+      jobText: "-",
+    },
+  );
+
+  assert.deepStrictEqual(
+    model.parseProgress({
+      phase: "gaussian",
+      step: "120",
+      scene_name: "scene_a",
+      loss: "0.25",
+      uploaded_images: "60",
+      percent: 0.125,
+    }),
+    {
+      phaseKey: "gaussian",
+      stageText: "gaussian",
+      stepText: "120",
+      sceneNameText: "scene_a",
+      lossText: "0.25",
+      uploadedImagesText: "60",
+      percentText: "12.5%",
+    },
+  );
+  assert.deepStrictEqual(
+    model.parseProgress({ stage: "spann3r", percent: "75" }),
+    {
+      phaseKey: "spann3r",
+      stageText: "spann3r",
+      stepText: "-",
+      sceneNameText: "-",
+      lossText: "-",
+      uploadedImagesText: "-",
+      percentText: "75.0%",
+    },
+  );
+  console.log("[OK] preview status/progress parsing");
+}
+
 function testPhasePolicy() {
   ["idle", "input", "upload", "stopped", "unknown"].forEach((phase) => {
     assert.strictEqual(model.canUploadByPhase(phase), true);
@@ -189,6 +248,7 @@ function main() {
   testJobNormalization();
   testPointcloudNormalization();
   testSummaryBuilders();
+  testStatusAndProgressParsing();
   testPhasePolicy();
   console.log("[OK] preview state model checks passed");
 }

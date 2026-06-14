@@ -271,6 +271,54 @@ function buildLogsData(data, limit) {
   };
 }
 
+function parseStatus(data) {
+  const obj = toObject(data);
+  const pid = pickNumber(obj, ["pid"]);
+  const queueLength = pickNumber(obj, ["queue_length"]);
+  const activeJob = toObject(obj.active_job);
+  let running = false;
+  if (typeof obj.running === "boolean") {
+    running = obj.running;
+  } else if (pid !== null) {
+    running = true;
+  }
+  return {
+    runningText: running ? "运行中" : "未运行",
+    pidText: pid === null ? "-" : String(pid),
+    queueText: queueLength === null ? "等待队列:-" : "等待队列:" + queueLength,
+    jobText: activeJob && activeJob.id ? activeJob.id + " | " + (activeJob.started_at || activeJob.created_at || "-") : "-"
+  };
+}
+
+function parseProgress(data) {
+  const obj = toObject(data);
+  const phase = pickString(obj, ["phase", "stage"]);
+  const step = pickString(obj, ["step"]);
+  const sceneName = pickString(obj, ["scene_name"]);
+  const loss = pickNumber(obj, ["loss"]);
+  const uploadedImages = pickNumber(obj, ["uploaded_images"]);
+  const percent = pickNumber(obj, ["percent"]);
+
+  let percentText = "-";
+  if (percent !== null) {
+    let normalized = percent;
+    if (normalized <= 1) {
+      normalized *= 100;
+    }
+    percentText = normalized.toFixed(1) + "%";
+  }
+
+  return {
+    phaseKey: phase || "unknown",
+    stageText: phase || "-",
+    stepText: step || "-",
+    sceneNameText: sceneName || "-",
+    lossText: loss === null ? "-" : String(loss),
+    uploadedImagesText: uploadedImages === null ? "-" : String(uploadedImages),
+    percentText: percentText
+  };
+}
+
 module.exports = {
   asText,
   buildJobsData,
@@ -286,6 +334,8 @@ module.exports = {
   jobStatusClass,
   normalizeJobItem,
   normalizePointcloudItem,
+  parseProgress,
+  parseStatus,
   pickNumber,
   pickString,
   toDashboardAbsoluteUrl,
