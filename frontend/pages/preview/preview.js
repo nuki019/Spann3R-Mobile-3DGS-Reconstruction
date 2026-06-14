@@ -274,80 +274,13 @@ Page({
   },
 
   getPhaseState(phase, uploadHealthy, dashboardHealthy, uploadAllow, queueEnabled) {
-    const phaseKey = phase || "unknown";
-    const canUpload = Boolean(uploadHealthy) &&
-      (typeof uploadAllow === "boolean" ? uploadAllow : this.canUploadByPhase(phaseKey));
-    const viewerLikelyReady = phaseKey === "gaussian" || phaseKey === "export" || phaseKey === "completed";
-    if (phaseKey === "input") {
-      return {
-        phaseKey: phaseKey,
-        phaseActionHint: canUpload ? "当前为 input 阶段：上传服务就绪，可上传采集帧。" : "当前为 input 阶段，但健康检查未通过（优先检查 uu 域名 /healthz）。",
-        phaseCanUpload: canUpload,
-        phaseCanViewer: viewerLikelyReady,
-        phaseCanDownload: false
-      };
-    }
-    if (phaseKey === "spann3r") {
-      return {
-        phaseKey: phaseKey,
-        phaseActionHint: "当前为 spann3r 阶段：重建处理中，上传已禁用。",
-        phaseCanUpload: canUpload,
-        phaseCanViewer: viewerLikelyReady,
-        phaseCanDownload: false
-      };
-    }
-    if (phaseKey === "gaussian") {
-      return {
-        phaseKey: phaseKey,
-        phaseActionHint: canUpload && queueEnabled ? "当前为 gaussian 阶段：Viewer 可访问，新采集会进入等待队列。" : "当前为 gaussian 阶段：可访问 Viewer，Gaussian 产物可能尚在生成。",
-        phaseCanUpload: canUpload,
-        phaseCanViewer: viewerLikelyReady,
-        phaseCanDownload: true
-      };
-    }
-    if (phaseKey === "export") {
-      return {
-        phaseKey: phaseKey,
-        phaseActionHint: canUpload && queueEnabled ? "当前为 export 阶段：正在导出点云，新采集会进入等待队列。" : "当前为 export 阶段：训练已结束，正在导出可下载点云。",
-        phaseCanUpload: canUpload,
-        phaseCanViewer: viewerLikelyReady,
-        phaseCanDownload: true
-      };
-    }
-    if (phaseKey === "completed") {
-      return {
-        phaseKey: phaseKey,
-        phaseActionHint: canUpload && queueEnabled ? "当前为 completed 阶段：可查看结果，也可继续上传新任务。" : "当前为 completed 阶段：可访问 Viewer 与下载点云。",
-        phaseCanUpload: canUpload,
-        phaseCanViewer: viewerLikelyReady,
-        phaseCanDownload: true
-      };
-    }
-    if (phaseKey === "stopped" || phaseKey === "idle") {
-      return {
-        phaseKey: phaseKey,
-        phaseActionHint: canUpload ? "当前未在训练流程中，但上传服务可用，可直接上传。" : "当前未在训练流程中，可在6008启动流程；若健康检查不通过则暂不可上传。",
-        phaseCanUpload: canUpload,
-        phaseCanViewer: viewerLikelyReady,
-        phaseCanDownload: false
-      };
-    }
-    if (phaseKey === "failed") {
-      return {
-        phaseKey: phaseKey,
-        phaseActionHint: "流程执行失败，请查看后端最新日志。",
-        phaseCanUpload: false,
-        phaseCanViewer: false,
-        phaseCanDownload: this.data.pointcloudList.length > 0
-      };
-    }
-    return {
-      phaseKey: "unknown",
-      phaseActionHint: canUpload ? "阶段未知，但上传服务可用；可尝试上传。" : "阶段未知且上传服务不可用，请检查 /api/progress 与 /healthz。",
-      phaseCanUpload: canUpload,
-      phaseCanViewer: viewerLikelyReady,
-      phaseCanDownload: false
-    };
+    return previewState.getPhaseState(phase, {
+      uploadHealthy: uploadHealthy,
+      dashboardHealthy: dashboardHealthy,
+      uploadAllow: uploadAllow,
+      queueEnabled: queueEnabled,
+      hasPointclouds: this.data.pointcloudList.length > 0
+    });
   },
 
   parseProgress(data) {
@@ -355,98 +288,14 @@ Page({
   },
 
   buildBackendPhases(progressData, uploadHealthOk, dashboardHealthOk, statusData, uploadAllow, queueEnabled) {
-    const phase = progressData.phaseKey || "unknown";
-    const runningText = statusData && statusData.runningText ? statusData.runningText : "-";
-    const sceneText = progressData.sceneNameText && progressData.sceneNameText !== "-" ? progressData.sceneNameText : "等待场景";
-    const stepText = progressData.stepText && progressData.stepText !== "-" ? progressData.stepText : "0";
-    const percentText = progressData.percentText && progressData.percentText !== "-" ? progressData.percentText : "0%";
-    const uploadedText = progressData.uploadedImagesText && progressData.uploadedImagesText !== "-" ? progressData.uploadedImagesText : "0";
-    const downloadReady = phase === "completed" || phase === "export" || this.data.pointcloudList.length > 0;
-
-    let uploadState = "等待";
-    let uploadClass = "pending";
-    let uploadDetail = dashboardHealthOk ? "状态服务已连接" : "等待后端状态服务";
-    const canUploadNow = uploadHealthOk &&
-      (typeof uploadAllow === "boolean" ? uploadAllow : this.canUploadByPhase(phase));
-    if (canUploadNow) {
-      uploadState = queueEnabled ? "队列就绪" : "可上传";
-      uploadClass = "running";
-      uploadDetail = queueEnabled ? "新采集会进入等待队列，" + statusData.queueText : "上传入口就绪，已接收 " + uploadedText + " 张";
-    } else if (uploadHealthOk) {
-      uploadState = "已完成";
-      uploadClass = "done";
-      uploadDetail = "上传阶段已关闭，进入后续训练";
-    } else if (dashboardHealthOk) {
-      uploadState = "待上传";
-      uploadClass = "warn";
-      uploadDetail = "状态服务正常，上传入口未就绪";
-    }
-
-    let spann3rState = "等待";
-    let spann3rClass = "pending";
-    let spann3rDetail = "等待上传稳定后开始";
-    if (phase === "spann3r") {
-      spann3rState = "运行中";
-      spann3rClass = "running";
-      spann3rDetail = "正在生成场景几何与相机位姿";
-    } else if (phase === "gaussian" || phase === "export" || phase === "completed") {
-      spann3rState = "已完成";
-      spann3rClass = "done";
-      spann3rDetail = sceneText;
-    } else if (phase === "stopped") {
-      spann3rState = "已停止";
-      spann3rClass = "warn";
-      spann3rDetail = "流程已停止，可重新开始";
-    }
-
-    let gaussianState = "等待";
-    let gaussianClass = "pending";
-    let gaussianDetail = "等待 Spann3R 输出";
-    if (phase === "gaussian") {
-      gaussianState = "训练中";
-      gaussianClass = "running";
-      gaussianDetail = "Step " + stepText + " | " + percentText;
-    } else if (phase === "export") {
-      gaussianState = "导出中";
-      gaussianClass = "running";
-      gaussianDetail = "训练完成，正在生成点云文件";
-    } else if (phase === "completed") {
-      gaussianState = "已完成";
-      gaussianClass = "done";
-      gaussianDetail = "训练与导出已结束";
-    } else if (phase === "stopped") {
-      gaussianState = "已停止";
-      gaussianClass = "warn";
-      gaussianDetail = runningText;
-    }
-
-    let completedState = "等待";
-    let completedClass = "pending";
-    let completedDetail = "完成后可查看 Viewer 与下载点云";
-    if (phase === "completed") {
-      completedState = "可查看";
-      completedClass = "done";
-      completedDetail = downloadReady ? "点云下载已准备" : "训练完成，等待点云列表刷新";
-    } else if (phase === "gaussian" || phase === "export") {
-      completedState = "生成中";
-      completedClass = "running";
-      completedDetail = phase === "export" ? "正在导出下载文件" : "等待 3DGaussian 输出";
-    } else if (phase === "stopped") {
-      completedState = "未完成";
-      completedClass = "warn";
-      completedDetail = "流程停止，结果可能不完整";
-    } else if (phase === "failed") {
-      completedState = "失败";
-      completedClass = "warn";
-      completedDetail = "查看最新日志定位失败原因";
-    }
-
-    return [
-      { key: "upload", title: "检测上传", state: uploadState, detail: uploadDetail, statusClass: uploadClass },
-      { key: "spann3r", title: "Spann3R 训练", state: spann3rState, detail: spann3rDetail, statusClass: spann3rClass },
-      { key: "gaussian", title: "3DGaussian 训练", state: gaussianState, detail: gaussianDetail, statusClass: gaussianClass },
-      { key: "completed", title: "训练完成", state: completedState, detail: completedDetail, statusClass: completedClass }
-    ];
+    return previewState.buildBackendPhases(progressData, {
+      uploadHealthOk: uploadHealthOk,
+      dashboardHealthOk: dashboardHealthOk,
+      statusData: statusData,
+      uploadAllow: uploadAllow,
+      queueEnabled: queueEnabled,
+      hasPointclouds: this.data.pointcloudList.length > 0
+    });
   },
 
   buildLogsData(data) {

@@ -228,6 +228,69 @@ function testStatusAndProgressParsing() {
   console.log("[OK] preview status/progress parsing");
 }
 
+function testBackendPhaseBuilders() {
+  assert.deepStrictEqual(
+    model.getPhaseState("gaussian", {
+      uploadHealthy: true,
+      uploadAllow: true,
+      queueEnabled: true,
+      hasPointclouds: false,
+    }),
+    {
+      phaseKey: "gaussian",
+      phaseActionHint: "当前为 gaussian 阶段：Viewer 可访问，新采集会进入等待队列。",
+      phaseCanUpload: true,
+      phaseCanViewer: true,
+      phaseCanDownload: true,
+    },
+  );
+  assert.deepStrictEqual(
+    model.getPhaseState("failed", { hasPointclouds: true }),
+    {
+      phaseKey: "failed",
+      phaseActionHint: "流程执行失败，请查看后端最新日志。",
+      phaseCanUpload: false,
+      phaseCanViewer: false,
+      phaseCanDownload: true,
+    },
+  );
+
+  const gaussianPhases = model.buildBackendPhases(
+    {
+      phaseKey: "gaussian",
+      sceneNameText: "demo_scene",
+      stepText: "420",
+      percentText: "42.0%",
+      uploadedImagesText: "80",
+    },
+    {
+      uploadHealthOk: true,
+      dashboardHealthOk: true,
+      statusData: { queueText: "等待队列:1", runningText: "运行中" },
+      uploadAllow: true,
+      queueEnabled: true,
+      hasPointclouds: false,
+    },
+  );
+  assert.deepStrictEqual(gaussianPhases.map((item) => item.state), ["队列就绪", "已完成", "训练中", "生成中"]);
+  assert.strictEqual(gaussianPhases[0].detail, "新采集会进入等待队列，等待队列:1");
+  assert.strictEqual(gaussianPhases[2].detail, "Step 420 | 42.0%");
+
+  const completedPhases = model.buildBackendPhases(
+    { phaseKey: "completed", sceneNameText: "demo_scene" },
+    {
+      uploadHealthOk: true,
+      dashboardHealthOk: true,
+      statusData: { queueText: "等待队列:0" },
+      uploadAllow: false,
+      hasPointclouds: false,
+    },
+  );
+  assert.deepStrictEqual(completedPhases.map((item) => item.state), ["已完成", "已完成", "已完成", "可查看"]);
+  assert.strictEqual(completedPhases[3].detail, "点云下载已准备");
+  console.log("[OK] preview backend phase builders");
+}
+
 function testPhasePolicy() {
   ["idle", "input", "upload", "stopped", "unknown"].forEach((phase) => {
     assert.strictEqual(model.canUploadByPhase(phase), true);
@@ -249,6 +312,7 @@ function main() {
   testPointcloudNormalization();
   testSummaryBuilders();
   testStatusAndProgressParsing();
+  testBackendPhaseBuilders();
   testPhasePolicy();
   console.log("[OK] preview state model checks passed");
 }
