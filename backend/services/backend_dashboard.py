@@ -25,6 +25,7 @@ from services.pointcloud_index import (
     DEFAULT_POINTCLOUD_ROOTS,
     build_pointclouds_summary_payload,
     build_zip_archive_name,
+    clear_pointcloud_files,
     discover_pointclouds as discover_pointcloud_items,
     filter_pointclouds_by_processed,
     find_scene_gaussian_files as find_scene_gaussian_files_for_items,
@@ -506,15 +507,7 @@ async def save_uploaded_frame(
 
 
 def clear_all_pointclouds() -> int:
-    deleted = 0
-    for root in POINTCLOUD_ROOTS:
-        if not root.exists():
-            continue
-        for pointcloud in root.rglob("*.ply"):
-            if under_allowed_roots(pointcloud):
-                pointcloud.unlink(missing_ok=True)
-                deleted += 1
-    return deleted
+    return clear_pointcloud_files(POINTCLOUD_ROOTS)
 
 
 def start_pipeline() -> int:

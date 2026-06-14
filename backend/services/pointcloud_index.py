@@ -270,6 +270,19 @@ def build_zip_archive_name(latest_scene: str, variant: str) -> str:
     return f"{archive_scene}_{archive_variant}.zip"
 
 
+def clear_pointcloud_files(roots: Iterable[Path]) -> int:
+    allowed_roots = [Path(root).resolve() for root in roots]
+    deleted = 0
+    for root in allowed_roots:
+        if not root.exists():
+            continue
+        for pointcloud in root.rglob("*.ply"):
+            if under_allowed_roots(pointcloud, allowed_roots):
+                pointcloud.unlink(missing_ok=True)
+                deleted += 1
+    return deleted
+
+
 def write_pointcloud_zip(
     items: List[Dict[str, str]],
     roots: Iterable[Path],

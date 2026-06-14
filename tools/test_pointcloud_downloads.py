@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "backend"))
 from services.pointcloud_index import (  # pylint: disable=wrong-import-position
     build_pointclouds_summary_payload,
     build_zip_archive_name,
+    clear_pointcloud_files,
     discover_pointclouds,
     filter_pointclouds_by_processed,
     find_scene_gaussian_files,
@@ -230,6 +231,23 @@ def check_scene_gaussian_and_zip(
     )
 
 
+def check_clear_pointcloud_files() -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = Path(tmp_dir)
+        allowed = root / "allowed"
+        outside = root / "outside"
+        keep_txt = write_fake_ply(allowed / "keep.txt", b"not-ply", 1_700_000_001)
+        delete_a = write_fake_ply(allowed / "scene_a" / "a.ply", b"a", 1_700_000_002)
+        outside_ply = write_fake_ply(outside / "outside.ply", b"outside", 1_700_000_004)
+
+        deleted = clear_pointcloud_files([allowed])
+        expect(deleted == 1, "clear should only delete allowed .ply files")
+        expect(not delete_a.exists(), "allowed lowercase ply should be deleted")
+        expect(outside_ply.exists(), "outside ply should be kept")
+        expect(keep_txt.exists(), "non-ply file should be kept")
+    print("[OK] pointcloud clear model")
+
+
 def main() -> None:
     check_variant_inference()
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -240,6 +258,7 @@ def main() -> None:
         check_processed_summary_and_index(items)
         check_download_selection_helpers(items)
         check_scene_gaussian_and_zip(roots, items, files)
+    check_clear_pointcloud_files()
     print("[OK] pointcloud download model checks passed")
 
 
