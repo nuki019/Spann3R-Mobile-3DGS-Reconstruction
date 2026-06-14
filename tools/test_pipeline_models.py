@@ -45,6 +45,19 @@ def test_job_queue_model() -> None:
         queue_root = Path(tmp_dir)
         job_id = sanitize_job_id("wx/session 01")
         assert_equal(job_id, "wx_session_01", "sanitize_job_id should normalize session ids")
+        assert_equal(
+            sanitize_job_id("../../wx session 01///"),
+            "wx_session_01",
+            "sanitize_job_id should remove path traversal characters",
+        )
+        assert_true(
+            len(sanitize_job_id("x" * 120)) <= 80,
+            "sanitize_job_id should cap long session ids",
+        )
+        assert_true(
+            sanitize_job_id("!!!").startswith("job_"),
+            "sanitize_job_id should generate fallback ids for empty input",
+        )
 
         images_dir = job_images_dir(queue_root, job_id)
         images_dir.mkdir(parents=True)
@@ -85,8 +98,11 @@ def test_job_queue_model() -> None:
             source_name="frame.jpg",
         )
         assert_equal(late["status"], "running", "late upload must not reset running job to queued")
+        assert_equal(late["image_count"], 2, "late upload should refresh image count")
         assert_equal(len(list_runnable_jobs(queue_root)), 0, "running job must not be runnable again")
         assert_equal(summarize_jobs(queue_root)["running"], 1, "summary should count running jobs")
+        manifest_lines = Path(str(late["manifest"])).read_text(encoding="utf-8").splitlines()
+        assert_equal(len(manifest_lines), 2, "manifest should append late upload rows")
 
         completed = mark_job(
             queue_root,
@@ -99,6 +115,24 @@ def test_job_queue_model() -> None:
         assert_true(completed.get("completed_at"), "completed job should have completed_at")
         assert_equal(summarize_jobs(queue_root)["completed"], 1, "summary should count completed jobs")
 
+        (images_dir / "frame_002.jpg").write_bytes(b"post-complete")
+        post_complete = record_uploaded_frame(
+            queue_root,
+            job_id,
+            filename="frame_002.jpg",
+            size_bytes=13,
+            frame_index="2",
+            source_name="frame.jpg",
+        )
+        assert_equal(
+            post_complete["status"],
+            "completed",
+            "post-completion upload must not reopen completed jobs",
+        )
+        assert_equal(post_complete["image_count"], 3, "post-completion upload should refresh image count")
+        manifest_lines = Path(str(post_complete["manifest"])).read_text(encoding="utf-8").splitlines()
+        assert_equal(len(manifest_lines), 3, "manifest should append post-completion rows")
+
         other_id = sanitize_job_id("wx/session 02")
         other_images = job_images_dir(queue_root, other_id)
         other_images.mkdir(parents=True)
@@ -110,6 +144,11 @@ def test_job_queue_model() -> None:
 
         jobs = list_jobs(queue_root)
         assert_true(all(job_dir(queue_root, str(job["id"])).exists() for job in jobs), "job dirs should exist")
+        bad_job = job_dir(queue_root, "bad-json")
+        bad_job.mkdir(parents=True)
+        (bad_job / "status.json").write_text("{not json", encoding="utf-8")
+        listed_ids = {str(job.get("id")) for job in list_jobs(queue_root)}
+        assert_true("bad-json" not in listed_ids, "corrupted jobs should be skipped")
     print("[OK] job queue model tests")
 
 
