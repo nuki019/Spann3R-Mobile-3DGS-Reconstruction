@@ -45,7 +45,7 @@ Spann3R-Mobile-3DGS-Reconstruction/
 │   │   ├── backend_4090.py      #     单卡 4090 阶段式流程
 │   │   └── spann3r_to_nerfstudio.py  # npy/pose → transforms.json
 │   ├── services/                #   HTTP 微服务
-│   │   ├── upload_server.py     #     上传服务（6006）
+│   │   ├── upload_server.py     #     可选独立上传服务
 │   │   ├── backend_dashboard.py #     管理 UI + 状态 API + 下载（6008）
 │   │   └── pointcloud_download_server.py
 │   ├── spann3r/                 #   Spann3R 模型定义与训练
@@ -139,7 +139,7 @@ cp .env.pipeline.4090.example .env.pipeline.4090
 
 # 5. 启动服务
 bash start_backend_ui.sh      # 管理 UI (6008)
-bash start_backend_4090.sh    # 上传 / 重建 / 训练 (6006)
+bash start_backend_4090.sh    # 重建 / 训练 / Viewer (6006)
 
 # 健康检查
 curl http://127.0.0.1:6008/healthz

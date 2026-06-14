@@ -193,6 +193,27 @@ def check_frontend_queue_entrypoints() -> None:
     print("[OK] frontend queue entrypoints")
 
 
+def check_frontend_capture_copy() -> None:
+    capture_js = (ROOT / "frontend" / "pages" / "capture" / "capture.js").read_text(
+        encoding="utf-8",
+        errors="ignore",
+    )
+    capture_json = (ROOT / "frontend" / "pages" / "capture" / "capture.json").read_text(
+        encoding="utf-8",
+        errors="ignore",
+    )
+    forbidden_terms = [
+        "上传到6006",
+        "6006上传",
+    ]
+    for term in forbidden_terms:
+        if term in capture_js or term in capture_json:
+            fail(f"capture page still exposes outdated upload copy: {term}")
+    if "上传中" not in capture_js:
+        fail("capture page should use generic upload progress copy")
+    print("[OK] frontend capture copy")
+
+
 def check_api_contract_script() -> None:
     result = subprocess.run(
         [sys.executable, str(ROOT / "tools" / "api_contract_check.py")],
@@ -292,6 +313,7 @@ def main() -> None:
     check_required_text()
     check_backend_routes()
     check_frontend_queue_entrypoints()
+    check_frontend_capture_copy()
     check_api_contract_script()
     check_pipeline_model_tests()
     check_pointcloud_download_tests()

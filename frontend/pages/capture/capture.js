@@ -149,7 +149,7 @@ Page({
       return "Spann3R 重建处理中，上传已禁用";
     }
     if (phase === "gaussian" || phase === "export" || phase === "completed") {
-      return "当前6006通常为 Viewer 阶段，上传不可用";
+      return "当前为查看或导出阶段，上传暂不可用";
     }
     if (this.canUploadByPhase(phase) && dashboardHealthy && !uploadHealthy) {
       return "状态服务已连通，但上传代理未就绪（检查 /upload-proxy/healthz）";
@@ -158,7 +158,7 @@ Page({
       return "健康检查未通过（请检查 uu 域名 /healthz）";
     }
     if (phase === "idle" || phase === "stopped") {
-      return "可在6008启动流程；若健康检查为 ok 也可直接上传";
+      return "可在后端管理台启动流程；健康检查通过后可直接上传";
     }
     return "后端阶段未知，请检查 /api/progress 与 /healthz";
   },
@@ -1013,7 +1013,7 @@ Page({
       });
 
       wx.showLoading({
-        title: "上传到6006：0/" + uploadFrameList.length,
+        title: "上传中：0/" + uploadFrameList.length,
         mask: true
       });
 
@@ -1023,7 +1023,7 @@ Page({
           var progress = Math.floor((current / total) * 100);
           that.setData({ uploadProgress: progress });
           wx.showLoading({
-            title: "上传到6006：" + current + "/" + total + " (" + progress + "%)",
+            title: "上传中：" + current + "/" + total + " (" + progress + "%)",
             mask: true
           });
         },
